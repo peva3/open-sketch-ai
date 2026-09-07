@@ -15,6 +15,19 @@ Supex Driver is part of the Supex platform - a bridge between AI agents and Sket
 - **CLI**: 14 commands for direct terminal interaction
 - **Connection Layer**: TCP/JSON-RPC client for SketchUp runtime
 
+## Supex Chat Agent
+
+`driver/src/supex_driver/agent/` adds `supex-chat` (console script), a provider-agnostic terminal agent that drives SketchUp through the same MCP server Claude Code uses. It speaks OpenAI- and Anthropic-compatible APIs (including local servers such as Unsloth Desktop) configured via `base_url` + `api_key` + `model`. See `docs/agent.md` for the full reference.
+
+### Supported platforms
+
+The agent runs on **Windows, Linux, and macOS**. It is delivered as **self-contained per-OS binaries** (PyInstaller) so no Python, `uv`, or repository clone is required on the target machine. Distribution implications:
+
+- The canonical entry point is the `supex-chat` console script / binary; the repo-root `sketch` wrapper is a Unix convenience only.
+- When running the agent from source, the SketchUp MCP backend is spawned as `python -m supex_driver.mcp` (same interpreter). When running an installed/frozen binary, a sibling `supex-mcp` executable is used. The repo `./mcp` bash wrapper is never assumed.
+- Agent guide content (`docs/agents/guide/*.md`) is bundled as package data so prompts resolve without a repo checkout.
+- See `driver/packaging/` and `TODO.md` Phase 7 for the binary build recipe and per-OS build matrix.
+
 ## Configuration
 
 Environment variables (all optional):
@@ -181,6 +194,14 @@ driver/
 |   +-- cli/
 |   |   +-- main.py                  # Typer CLI commands
 |   |   +-- output.py                # Rich/plain output formatting
+|   +-- agent/                       # Provider-agnostic chat agent (supex-chat)
+|   |   +-- config.py                # Provider/env config resolution
+|   |   +-- providers/               # OpenAI + Anthropic dialect clients
+|   |   +-- sketchup_mcp.py          # MCP client backend (SketchUp tools)
+|   |   +-- file_tools.py            # Workspace file tools
+|   |   +-- prompts.py               # Guide-derived system prompt
+|   |   +-- loop.py                  # Agentic loop
+|   |   +-- cli.py                   # supex-chat CLI
 |   +-- connection/
 |       +-- sketchup_connection.py   # TCP socket client for the runtime
 |       +-- sketchup_exceptions.py   # SketchUp error hierarchy
@@ -231,10 +252,12 @@ uv run pytest tests/ -v
 
 | Script | Purpose |
 |--------|---------|
-| `./mcp` | MCP server (for Claude Code) |
-| `./supex` | CLI interface |
+| `./mcp` | MCP server (for Claude Code; Unix wrapper) |
+| `./supex` | CLI interface (Unix wrapper) |
+| `./sketch` | Chat agent (Unix convenience wrapper) |
 | `supex-mcp` | Direct MCP entry point |
 | `supex` | Direct CLI entry point |
+| `supex-chat` | Chat agent entry point (canonical, cross-platform) |
 
 ### Testing Connection
 
