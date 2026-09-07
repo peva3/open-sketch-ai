@@ -84,6 +84,15 @@ def _install_transport(provider: ChatProvider, handler) -> httpx2.AsyncClient:
     return client
 
 
+async def _disable_backoff(provider: ChatProvider) -> None:
+    """Replace the provider's backoff sleep with a no-op for fast retry tests."""
+
+    async def noop(attempt: int) -> None:  # noqa: ARG001
+        return None
+
+    provider._backoff = noop  # type: ignore[attr-defined] # noqa: SLF001 - test seam
+
+
 async def _collect(provider: ChatProvider, messages, **kwargs) -> list:
     events: list = []
     async for event in provider.stream(messages, **kwargs):
@@ -409,7 +418,7 @@ class TestOpenAIAuthAndErrors:
         async def handler(request: httpx2.Request) -> httpx2.Response:
             return _json_response({"error": "invalid key"}, status=401)
 
-        provider = build_provider(_openai_config())
+        provider = build_provider(_openai_config(retries=0))
         _install_transport(provider, handler)
         try:
             with pytest.raises(ProviderAuthError):
@@ -422,7 +431,7 @@ class TestOpenAIAuthAndErrors:
         async def handler(request: httpx2.Request) -> httpx2.Response:
             return _json_response({"error": "slow down"}, status=429)
 
-        provider = build_provider(_openai_config())
+        provider = build_provider(_openai_config(retries=0))
         _install_transport(provider, handler)
         try:
             with pytest.raises(ProviderRateLimitError):
@@ -435,7 +444,7 @@ class TestOpenAIAuthAndErrors:
         async def handler(request: httpx2.Request) -> httpx2.Response:
             return _json_response({"error": "boom"}, status=500)
 
-        provider = build_provider(_openai_config())
+        provider = build_provider(_openai_config(retries=0))
         _install_transport(provider, handler)
         try:
             with pytest.raises(ProviderHTTPError) as exc:
@@ -812,10 +821,129 @@ class TestConnectionFailures:
         async def handler(request: httpx2.Request) -> httpx2.Response:
             raise httpx2.ConnectError("connection refused")
 
-        provider = build_provider(_openai_config())
+        provider = build_provider(_openai_config(retries=0))
         _install_transport(provider, handler)
         try:
             with pytest.raises(ProviderConnectionError):
                 await _collect(provider, [Message(role="user", content="hi")])
         finally:
             await provider.aclose()
+
+
+class TestRetries:
+    @pytest.mark.asyncio
+    async def test_connect_error_retries_then_raises(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            raise httpx2.ConnectError("still down")
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(provider, handler)
+        await _disable_backoff(provider)
+        try:
+            with pytest.raises(ProviderConnectionError):
+                await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert calls == 3
+
+    @pytest.mark.asyncio
+    async def test_transient_429_succeeds_after_retry(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                return _json_response({"error": "slow down"}, status=429)
+            return _json_response(_sse("data: [DONE]"))
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(provider, handler)
+        await _disable_backoff(provider)
+        try:
+            events = await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert calls == 3
+        assert isinstance(events[-1], Done)
+
+    @pytest.mark.asyncio
+    async def test_transient_500_succeeds_on_list_models(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return _json_response({"error": "boom"}, status=500)
+            return _json_response({"data": [{"id": "a"}]})
+
+        provider = build_provider(_openai_config(retries=1))
+        _install_transport(provider, handler)
+        await _disable_backoff(provider)
+        try:
+            models = await provider.list_models()
+        finally:
+            await provider.aclose()
+        assert calls == 2
+        assert models == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_auth_error_is_not_retried(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            return _json_response({"error": "bad key"}, status=401)
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(provider, handler)
+        await _disable_backoff(provider)
+        try:
+            with pytest.raises(ProviderAuthError):
+                await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_4xx_is_not_retried(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            return _json_response({"error": "bad request"}, status=400)
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(provider, handler)
+        await _disable_backoff(provider)
+        try:
+            with pytest.raises(ProviderHTTPError):
+                await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_zero_retries_raises_immediately(self):
+        calls = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal calls
+            calls += 1
+            raise httpx2.ConnectError("refused")
+
+        provider = build_provider(_openai_config(retries=0))
+        _install_transport(provider, handler)
+        try:
+            with pytest.raises(ProviderConnectionError):
+                await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert calls == 1

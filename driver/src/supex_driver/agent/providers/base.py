@@ -8,6 +8,7 @@ in :mod:`.openai` and :mod:`.anthropic`.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from abc import ABC, abstractmethod
@@ -21,8 +22,10 @@ import httpx2
 from supex_driver.agent.config import ProviderConfig
 from supex_driver.agent.errors import (
     ProviderConnectionError,
+    ProviderError,
     ProviderHTTPError,
     ProviderProtocolError,
+    ProviderRateLimitError,
     ProviderTimeoutError,
 )
 
@@ -186,6 +189,32 @@ def extract_model_ids(data: dict[str, Any] | None) -> list[str]:
     return ids
 
 
+def _map_open_error(exc: BaseException, url: str) -> ProviderError | None:
+    """Map an exception raised while opening a request to a typed error."""
+    if isinstance(exc, ProviderError):
+        return exc
+    if isinstance(exc, httpx2.ConnectTimeout):
+        return ProviderTimeoutError(f"timed out connecting to {url}: {exc}")
+    if isinstance(exc, httpx2.TimeoutException):
+        return ProviderTimeoutError(f"timed out talking to {url}: {exc}")
+    if isinstance(exc, httpx2.ConnectError):
+        return ProviderConnectionError(f"could not reach {url}: {exc}")
+    if isinstance(exc, httpx2.HTTPError):
+        return ProviderConnectionError(f"HTTP error talking to {url}: {exc}")
+    return None
+
+
+def _is_retryable(error: ProviderError) -> bool:
+    """Whether a typed open error is safe to retry with backoff."""
+    if isinstance(
+        error, (ProviderTimeoutError, ProviderConnectionError, ProviderRateLimitError)
+    ):
+        return True
+    if isinstance(error, ProviderHTTPError):
+        return error.status_code >= 500
+    return False
+
+
 class ChatProvider(ABC):
     """Base class for streaming chat providers.
 
@@ -262,42 +291,93 @@ class ChatProvider(ABC):
             raise ProviderRateLimitError(f"provider rate-limited (HTTP 429): {detail}")
         raise ProviderHTTPError(response.status_code, detail or response.reason_phrase)
 
+    async def _backoff(self, attempt: int) -> None:
+        """Exponential backoff before retry ``attempt`` (0.25s, 0.5s, 1s, ...)."""
+        await asyncio.sleep(min(0.25 * (2**attempt), 5.0))
+
+    async def _open_with_retry(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any] | None,
+    ) -> httpx2.Response:
+        """Open a request and return its (unread) response, retrying transient
+        failures with backoff. Only the connection + status-check phase is
+        retried; once a response is returned the caller owns the body, and a
+        mid-stream failure is the caller's to surface (never replayed).
+
+        Returns the opened response on success; raises a typed
+        :class:`ProviderError` after ``config.retries`` retries.
+        """
+        last_error: ProviderError | None = None
+        for attempt in range(self.config.retries + 1):
+            try:
+                if payload is not None:
+                    stream_cm = self._http.stream(
+                        method, url, headers=headers, json=payload
+                    )
+                else:
+                    stream_cm = self._http.stream(method, url, headers=headers)
+                response = await stream_cm.__aenter__()
+            except httpx2.ConnectTimeout as exc:
+                last_error = ProviderTimeoutError(
+                    f"timed out connecting to {url}: {exc}"
+                )
+            except httpx2.TimeoutException as exc:
+                last_error = ProviderTimeoutError(f"timed out talking to {url}: {exc}")
+            except httpx2.ConnectError as exc:
+                last_error = ProviderConnectionError(f"could not reach {url}: {exc}")
+            except httpx2.HTTPError as exc:
+                last_error = ProviderConnectionError(
+                    f"HTTP error talking to {url}: {exc}"
+                )
+            else:
+                try:
+                    await self._check_response(response)
+                except ProviderHTTPError as exc:
+                    if exc.status_code < 500:
+                        raise
+                    last_error = exc
+                except ProviderRateLimitError as exc:
+                    last_error = exc
+                else:
+                    return response
+                with contextlib.suppress(Exception):
+                    await response.aclose()
+            if attempt >= self.config.retries:
+                break
+            await self._backoff(attempt)
+        assert last_error is not None
+        raise last_error
+
     @asynccontextmanager
     async def _stream_text(
         self, url: str, headers: dict[str, str], payload: dict[str, Any]
     ) -> AsyncIterator[httpx2.Response]:
         """Open a POST SSE stream; raise typed errors on connection failure."""
+        response = await self._open_with_retry("POST", url, headers, payload)
         try:
-            async with self._http.stream(
-                "POST", url, headers=headers, json=payload
-            ) as response:
-                await self._check_response(response)
-                yield response
-        except httpx2.ConnectTimeout as exc:
-            raise ProviderTimeoutError(f"timed out connecting to {url}: {exc}") from exc
-        except httpx2.TimeoutException as exc:
-            raise ProviderTimeoutError(f"timed out talking to {url}: {exc}") from exc
-        except httpx2.ConnectError as exc:
-            raise ProviderConnectionError(f"could not reach {url}: {exc}") from exc
-        except httpx2.HTTPError as exc:
-            raise ProviderConnectionError(
-                f"HTTP error talking to {url}: {exc}"
-            ) from exc
+            yield response
+        finally:
+            with contextlib.suppress(Exception):
+                await response.aclose()
 
     async def _get_json(
         self, url: str, headers: dict[str, str]
     ) -> dict[str, Any] | None:
         """Perform a GET and return parsed JSON, or None on 404/405."""
         try:
-            async with self._http.stream("GET", url, headers=headers) as response:
-                if response.status_code in (404, 405):
-                    return None
-                await self._check_response(response)
-                body = await response.aread()
-        except httpx2.TimeoutException as exc:
-            raise ProviderTimeoutError(f"timed out talking to {url}: {exc}") from exc
-        except httpx2.HTTPError as exc:
-            raise ProviderConnectionError(f"could not reach {url}: {exc}") from exc
+            response = await self._open_with_retry("GET", url, headers, None)
+        except ProviderHTTPError as exc:
+            if exc.status_code in (404, 405):
+                return None
+            raise
+        try:
+            body = await response.aread()
+        finally:
+            with contextlib.suppress(Exception):
+                await response.aclose()
         try:
             parsed = json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:

@@ -22,6 +22,7 @@ ENV_KEYS = [
     "SUPEX_AI_MAX_ITERATIONS",
     "SUPEX_AI_VISION",
     "SUPEX_AI_AUTH_STYLE",
+    "SUPEX_AI_RETRIES",
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
@@ -240,6 +241,7 @@ class TestLoadConfigScalars:
         assert cfg.max_iterations == 10
         assert cfg.vision is False
         assert cfg.auth_header == "auto"
+        assert cfg.retries == 2
 
     def test_temperature_parsed(self):
         cfg = load_config(env=_env(SUPEX_AI_TEMPERATURE="0.7"))
@@ -280,6 +282,18 @@ class TestLoadConfigScalars:
     def test_timeout_env_parsed(self):
         cfg = load_config(env=_env(SUPEX_AI_TIMEOUT="30"))
         assert cfg.timeout == 30.0
+
+    def test_retries_env_parsed(self):
+        cfg = load_config(env=_env(SUPEX_AI_RETRIES="5"))
+        assert cfg.retries == 5
+
+    def test_retries_zero_parsed(self):
+        cfg = load_config(env=_env(SUPEX_AI_RETRIES="0"))
+        assert cfg.retries == 0
+
+    def test_negative_retries_raises(self):
+        with pytest.raises(ConfigError, match="SUPEX_AI_RETRIES"):
+            load_config(env=_env(SUPEX_AI_RETRIES="-1"))
 
 
 class TestProviderConfigProperties:

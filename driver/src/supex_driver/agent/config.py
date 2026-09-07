@@ -90,6 +90,7 @@ class ProviderConfig:
     model: str | None = None
     dialect: Dialect = "auto"
     timeout: float = 60.0
+    retries: int = 2
     temperature: float | None = None
     max_tokens: int | None = None
     max_iterations: int = 10
@@ -115,6 +116,7 @@ def load_config(
     model: str | None = None,
     dialect: Dialect = "auto",
     timeout: float | None = None,
+    retries: int | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
     max_iterations: int | None = None,
@@ -197,6 +199,13 @@ def load_config(
         if temperature is not None
         else _float_env(env, "SUPEX_AI_TEMPERATURE", float("nan"))
     )
+    retries_value = (
+        retries
+        if retries is not None
+        else _int_env(env, "SUPEX_AI_RETRIES", 2)
+    )
+    if retries_value < 0:
+        raise ConfigError(f"SUPEX_AI_RETRIES must be >= 0, got {retries_value}")
     max_tokens_value = (
         max_tokens
         if max_tokens is not None
@@ -217,6 +226,7 @@ def load_config(
         timeout=timeout
         if timeout is not None
         else _float_env(env, "SUPEX_AI_TIMEOUT", 60.0),
+        retries=retries_value,
         temperature=None if math.isnan(temperature_value) else temperature_value,
         max_tokens=None if max_tokens_value <= 0 else max_tokens_value,
         max_iterations=max_iterations
