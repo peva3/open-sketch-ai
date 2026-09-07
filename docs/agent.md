@@ -268,6 +268,28 @@ browser at `http://127.0.0.1:8765`). The `sketch` shell wrapper at the repo
 root is **Unix-only** and exists for development convenience — it is not part
 of the binary distribution.
 
+### Windows desktop (no terminal, no cloud)
+
+The Windows packaging folder ships two double-click scripts (build locally,
+nothing is uploaded anywhere):
+
+1. `driver/packaging/windows/build-exe.cmd` — double-click **once** on the
+   machine that will run the agent. It installs `uv` if missing, installs the
+   build extra, runs PyInstaller, and drops the launcher next to the binaries.
+   Output goes to `driver/dist/` as `supex-chat.exe`, `supex-mcp.exe`,
+   `supex.exe`, and `run-supex-chat.cmd`.
+2. `driver/dist/run-supex-chat.cmd` — double-click to launch the windowed
+   agent: it starts the local server and opens the chat window in your default
+   browser at `http://127.0.0.1:8765`. For a desktop icon, right-click
+   `run-supex-chat.cmd` and choose *Send to > Desktop (create shortcut)*.
+
+The three executables must stay together in one folder: a frozen `supex-chat`
+spawns the frozen `supex-mcp` sibling as its SketchUp backend. Provider
+configuration comes from the same env vars or profiles file as any other
+invocation (see [Configuration](#configuration) above); you can set them in
+`run-supex-chat.cmd` or, better, in a named profile so the app finds them
+without a terminal.
+
 Falling back to a source install works too: with Python 3.14 and uv,
 
 ```bash
