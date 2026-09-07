@@ -104,6 +104,28 @@ Shell scripts under `scripts/` print `[DEBUG]` lines when `SUPEX_DEBUG=1` is set
 
 If neither `SUPEX_VCAD_TEMP_DIR` nor `SUPEX_WORKSPACE` is set, sidecar startup fails.
 
+## Supex Chat Agent
+
+The `supex-chat` agent ([Supex Chat Agent](agent.md)) resolves its model
+endpoint with this precedence: CLI flags > `SUPEX_AI_*` env > provider-standard
+env (`OPENAI_*` / `ANTHROPIC_*`) > named provider profile > built-in defaults.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `SUPEX_AI_BASE_URL` | dialect default | Model API base URL (`https://api.openai.com/v1`, `https://api.anthropic.com`, `http://localhost:8000` for Unsloth Desktop) |
+| `SUPEX_AI_API_KEY` | (unset) | API key (never logged) |
+| `SUPEX_AI_MODEL` | (required) | Model identifier |
+| `SUPEX_AI_DIALECT` | `auto` | `auto`, `openai`, or `anthropic`. `auto` sniffs URL then key shape |
+| `SUPEX_AI_TIMEOUT` | `60` | Request timeout in seconds |
+| `SUPEX_AI_RETRIES` | `2` | Retry attempts (exponential backoff) on connect/status-phase failures; 4xx and auth errors are not retried |
+| `SUPEX_AI_TEMPERATURE` | (unset) | Sampling temperature |
+| `SUPEX_AI_MAX_TOKENS` | (unset) | Max output tokens (`<=0` means unset; Anthropic defaults to `4096`) |
+| `SUPEX_AI_MAX_ITERATIONS` | `10` | Max tool-call iterations per prompt |
+| `SUPEX_AI_VISION` | `0` | When `1`, the agent reads screenshot PNGs and attaches them to the next model turn |
+| `SUPEX_AI_AUTH_STYLE` | `auto` | `auto`, `x-api-key`, or `bearer` (header flavor for Anthropic-dialect local servers) |
+| `SUPEX_AI_PROFILE` | (unset) | Named provider profile to use (see `agent.md`) |
+| `SUPEX_AI_CONFIG_DIR` | per-OS | Override the provider-profiles config directory |
+
 ## Log Files
 
 All logs are written under a single canonical root: `$SUPEX_WORKSPACE/.tmp/logs/`

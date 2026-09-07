@@ -53,6 +53,7 @@ supex/
 ├── .github/                   # GitHub Actions workflows and Dependabot config
 ├── driver/                    # Python MCP driver + CLI
 │   └── src/supex_driver/
+│       ├── agent/             # Supex Chat Agent (provider-agnostic AI agent + chat UI)
 │       ├── cli/               # CLI commands
 │       ├── connection/        # SketchUp socket connection
 │       └── mcp/               # MCP server
@@ -82,7 +83,7 @@ supex/
 ├── scripts/                   # Development scripts
 ├── examples/                  # Example projects (orphan branches)
 ├── justfile                   # just recipes: sketchup, test, test-e2e, docs, lint, clear-rust-caches
-├── supex, mcp, repl           # Root wrappers: CLI, MCP server, REPL client
+├── supex, mcp, repl, sketch   # Root wrappers: CLI, MCP server, REPL client, supex-chat agent
 └── test, radar, vcad-sidecar  # Root wrappers: test runner, radar TUI, VCAD sidecar
 ```
 
@@ -137,6 +138,7 @@ cd runtime && bundle exec rake build
 - `driver/src/supex_driver/connection/sketchup_connection.py` - SketchUp socket connection
 - `driver/src/supex_driver/connection/vcad_connection.py` - VCAD sidecar connection
 - `driver/src/supex_driver/cli/main.py` - CLI implementation
+- `driver/src/supex_driver/agent/` - Supex Chat Agent: config, providers (OpenAI/Anthropic), MCP client, file tools, agent loop, local HTTP server + chat UI, `supex-chat` CLI
 
 **Runtime (Ruby):**
 - `runtime/src/supex_runtime.rb` - Extension loader
@@ -146,6 +148,7 @@ cd runtime && bundle exec rake build
 - `scripts/launch-sketchup.sh` - Development launcher
 - `mcp` - MCP server entry point
 - `supex` - CLI entry point
+- `sketch` - supex-chat agent entry point (Unix convenience wrapper for `supex-chat`)
 
 ## Naming Conventions
 

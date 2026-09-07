@@ -42,6 +42,7 @@ Supex bridges AI agents and CLI tools with SketchUp through a client-server arch
 ![Architecture Overview](assets/supex-architecture-poster.png)
 
 - **Python Driver** — [MCP](https://modelcontextprotocol.io) server (`./mcp`) and CLI (`./supex`) for AI agents and human use
+- **Chat Agent** — `supex-chat`, a provider-agnostic agent (OpenAI, Anthropic, or local models) that drives the same MCP server (`./sketch` wrapper)
 - **Ruby Runtime** — SketchUp extension with bridge server, stdlib, and REPL (`./repl`)
 - **VCAD Sidecar** — Rust server evaluating Loon code into BRep geometry (`./vcad-sidecar`)
 - **VCAD Viewer** — Standalone Tauri app for live BRep preview
@@ -190,6 +191,7 @@ Run tests and linters from the repository root:
 
 - **[Documentation Index](docs/README.md)** - Start here for docs navigation
 - **[CLI Reference](docs/cli.md)** - Command-line interface for direct SketchUp interaction
+- **[Supex Chat Agent](docs/agent.md)** - Provider-agnostic agent (OpenAI/Anthropic/local models)
 - **[Interactive REPL](docs/repl.md)** - Interactive Ruby development in SketchUp
 - **[MCP Reference](docs/agents/guide/mcp.md)** - Tools available for AI agents (Claude Code)
 - **[Configuration](docs/configuration.md)** - Environment variables and settings

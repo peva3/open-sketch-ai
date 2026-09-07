@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/helpers/common.sh"
 # Test suite registry: slug|display name|directory|command|requires_e2e
 SUITES=(
     "driver|Python Driver Tests|driver|uv run python -m pytest tests/|false"
+    "agent|Supex Chat Agent Tests|driver|uv run python -m pytest tests/agent/|false"
     "stdlib|Ruby Stdlib Tests|stdlib|bundle exec rake test|false"
     "runtime|Ruby Runtime Tests|runtime|bundle exec rake test|false"
     "mock|Ruby Mock Tests|mock|bundle exec rake test|false"
