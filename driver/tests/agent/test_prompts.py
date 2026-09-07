@@ -70,8 +70,18 @@ def test_build_system_prompt_vision_enabled_mentions_images(tmp_path) -> None:
 
 def test_bundled_fallback_missing_raises_helpful_error(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(prompts, "_repo_guide_dir", lambda: None)
+    monkeypatch.setattr(prompts, "BUNDLED_PACKAGE", "supex_driver.agent.no_such_guide")
     with pytest.raises(GuideError, match="no repo checkout"):
         prompts.load_guide_file("README.md")
+
+
+def test_bundled_guide_package_reads_real_files(monkeypatch) -> None:
+    monkeypatch.setattr(prompts, "_repo_guide_dir", lambda: None)
+    for name in prompts.GUIDE_FILES:
+        filename, text = prompts.load_guide_file(name)
+        assert filename == name
+        assert text.strip()
+    assert prompts.guide_available() is True
 
 
 def test_bundled_fallback_reads_package_data(monkeypatch) -> None:

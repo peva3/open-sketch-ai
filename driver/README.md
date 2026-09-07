@@ -37,7 +37,7 @@ The agent runs on **Windows, Linux, and macOS**. It is delivered as **self-conta
 - The canonical entry point is the `supex-chat` console script / binary; the repo-root `sketch` wrapper is a Unix convenience only.
 - When running the agent from source, the SketchUp MCP backend is spawned as `python -m supex_driver.mcp` (same interpreter). When running an installed/frozen binary, a sibling `supex-mcp` executable is used. The repo `./mcp` bash wrapper is never assumed.
 - Agent guide content (`docs/agents/guide/*.md`) is bundled as package data so prompts resolve without a repo checkout.
-- See `driver/packaging/` and `TODO.md` Phase 8 for the binary build recipe and per-OS build matrix.
+- See `driver/packaging/` (recipe: `uv run pyinstaller --noconfirm --clean --distpath dist --workpath build packaging/supex.spec`, run per target OS) and `docs/agent.md` **Install** / **Build from source** for full instructions.
 
 ## Configuration
 

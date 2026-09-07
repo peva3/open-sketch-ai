@@ -248,6 +248,64 @@ group wins; set `SUPEX_AI_DIALECT` (or a profile) to disambiguate.
   [Security](security.md). Only run the agent against SketchUp models you
   trust.
 
+## Install
+
+`supex-chat` is distributed as **self-contained per-OS binaries** built with
+PyInstaller (see [Build from source](#build-from-source)). Each binary bundles
+everything it needs — the provider client, the chat UI, and the agent guide
+used as the system prompt — so no Python, uv, or repository clone is required
+on the target machine. Three executables ship together:
+
+- `supex-chat` — the agent (terminal CLI and `serve` windowed app);
+- `supex-mcp` — the stdio MCP server the agent spawns as its SketchUp backend
+  (a frozen agent launches this frozen sibling executable);
+- `supex` — the original sketch-up command-line interface.
+
+Put the folder containing the three binaries on `PATH`. On Windows they are
+`.exe` files; on Linux/macOS they are executable ELF/Mach-O files. On Windows
+and macOS, run them from a terminal (the windowed app opens your default
+browser at `http://127.0.0.1:8765`). The `sketch` shell wrapper at the repo
+root is **Unix-only** and exists for development convenience — it is not part
+of the binary distribution.
+
+Falling back to a source install works too: with Python 3.14 and uv,
+
+```bash
+uv tool install --from driver supex-chat   # from a checkout, or
+uv tool install supex-driver               # once published
+```
+
+`sketch` and `supex-chat` also work from a dev checkout via
+`uv run --project driver supex-chat`.
+
+## Build from source
+
+Building produces all three binaries in one pass from `driver/packaging/`:
+
+```bash
+cd driver
+uv sync --group build          # installs the pyinstaller build extra
+uv run pyinstaller --noconfirm --clean \
+  --distpath dist --workpath build \
+  packaging/supex.spec
+```
+
+Artifacts land in `driver/dist/` as `supex-chat`, `supex-mcp`, and `supex`
+(plus `.exe` on Windows). The spec embeds the bundled agent guide and the chat
+UI as PyInstaller `datas`, and collects all `supex_driver` submodules as hidden
+imports. Builds are per-OS: run the command on each target OS (or use CI) since
+PyInstaller does not cross-compile. The `.spec` header documents the exact
+invocation, including that `--specpath` must not be passed when a `.spec` file
+is given directly.
+
+For a quick sanity check after building:
+
+```bash
+dist/supex-chat --version
+dist/supex-chat --base-url http://localhost:8000 --api-key sk-unsloth-... \
+  --model qwen3-local --dialect auto --check
+```
+
 ## In-SketchUp embedding (roadmap)
 
 The chat window is a plain web page served on `127.0.0.1`, so the same URL can
