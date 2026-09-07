@@ -25,6 +25,7 @@ ENV_KEYS = [
     "SUPEX_AI_MAX_TOKENS",
     "SUPEX_AI_MAX_ITERATIONS",
     "SUPEX_AI_VISION",
+    "SUPEX_AI_PROFILE",
     "OPENAI_BASE_URL",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
@@ -146,6 +147,87 @@ class TestLoadConfigFrom:
                 max_iterations=None,
             )
         assert exc.value.exit_code == 2
+
+    def test_provider_profile_fills_config(self, monkeypatch):
+        profile = {
+            "base_url": "http://localhost:8000",
+            "api_key": "sk-unsloth-test",
+            "model": "qwen3-local",
+            "dialect": "anthropic",
+        }
+        monkeypatch.setattr(cli_mod, "resolve_profile", lambda name: profile)
+        cfg = cli_mod._load_config_from(
+            model=None,
+            base_url=None,
+            api_key=None,
+            dialect="auto",
+            vision=None,
+            timeout=None,
+            temperature=None,
+            max_tokens=None,
+            max_iterations=None,
+            provider_profile="unsloth",
+        )
+        assert cfg.model == "qwen3-local"
+        assert cfg.base_url == "http://localhost:8000"
+        assert cfg.dialect == "anthropic"
+
+    def test_supex_ai_profile_env_selects_profile(self, monkeypatch):
+        profile = {"base_url": "http://localhost:9000", "model": "m-from-profile"}
+        monkeypatch.setattr(cli_mod, "resolve_profile", lambda name: profile)
+        monkeypatch.setenv("SUPEX_AI_PROFILE", "local")
+        cfg = cli_mod._load_config_from(
+            model=None,
+            base_url=None,
+            api_key=None,
+            dialect="auto",
+            vision=None,
+            timeout=None,
+            temperature=None,
+            max_tokens=None,
+            max_iterations=None,
+        )
+        assert cfg.base_url == "http://localhost:9000"
+
+    def test_flags_beat_provider_profile(self, monkeypatch):
+        profile = {"base_url": "http://localhost:8000", "model": "qwen3-local"}
+        monkeypatch.setattr(cli_mod, "resolve_profile", lambda name: profile)
+        cfg = cli_mod._load_config_from(
+            model="flag-model",
+            base_url=None,
+            api_key=None,
+            dialect="auto",
+            vision=None,
+            timeout=None,
+            temperature=None,
+            max_tokens=None,
+            max_iterations=None,
+            provider_profile="unsloth",
+        )
+        assert cfg.model == "flag-model"
+
+    def test_unknown_profile_exits_2(self, monkeypatch, capsys):
+        from supex_driver.agent.errors import ConfigError
+
+        def _boom(name):
+            raise ConfigError("unknown provider profile 'nope'")
+
+        monkeypatch.setattr(cli_mod, "resolve_profile", _boom)
+        with pytest.raises(typer.Exit) as exc:
+            cli_mod._load_config_from(
+                model=None,
+                base_url=None,
+                api_key=None,
+                dialect="auto",
+                vision=None,
+                timeout=None,
+                temperature=None,
+                max_tokens=None,
+                max_iterations=None,
+                provider_profile="nope",
+            )
+        assert exc.value.exit_code == 2
+        assert "unknown provider profile" in capsys.readouterr().err
 
 
 class TestEventPrinter:

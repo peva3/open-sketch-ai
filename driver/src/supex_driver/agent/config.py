@@ -2,7 +2,12 @@
 
 Resolution precedence is: explicit keyword arguments (CLI flags) >
 ``SUPEX_AI_*`` environment variables > provider-standard environment
-variables (``OPENAI_*`` / ``ANTHROPIC_*``) > built-in defaults.
+variables (``OPENAI_*`` / ``ANTHROPIC_*``) > an optional named
+*provider profile* mapping > built-in defaults.
+
+Profiles are the weakest user-supplied source: any flag or environment
+variable for the same field wins over a profile value (see
+:mod:`supex_driver.agent.profiles` for the on-disk format).
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from typing import Literal, cast
 from supex_driver.agent.errors import ConfigError
 
 Dialect = Literal["auto", "openai", "anthropic"]
+ConcreteDialect = Literal["openai", "anthropic"]
 AuthStyle = Literal["auto", "x-api-key", "bearer"]
 
 _OPENAI_DEFAULT_BASE = "https://api.openai.com/v1"
@@ -113,15 +119,18 @@ def load_config(
     max_tokens: int | None = None,
     max_iterations: int | None = None,
     vision: bool | None = None,
+    profile: Mapping[str, str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ProviderConfig:
     """Build a :class:`ProviderConfig` from explicit args + env fallbacks.
 
     Args are honored first, then ``SUPEX_AI_*`` variables, then the
     provider-standard ``OPENAI_*``/``ANTHROPIC_*`` group matching the
-    effective dialect.
+    effective dialect, then an optional ``profile`` mapping (the weakest
+    user-supplied source), then built-in default base URLs.
     """
     env = os.environ if env is None else env
+    profile = profile or {}
 
     supex_base = env.get("SUPEX_AI_BASE_URL")
     supex_key = env.get("SUPEX_AI_API_KEY")
@@ -129,18 +138,41 @@ def load_config(
     candidate_key = api_key or supex_key
     candidate_base = base_url or supex_base
 
+    env_dialect = env.get("SUPEX_AI_DIALECT")
+    profile_dialect = profile.get("dialect")
+    profile_base = profile.get("base_url")
+    profile_key = profile.get("api_key")
     if dialect in ("openai", "anthropic"):
-        effective: Literal["openai", "anthropic"] = dialect
+        effective: ConcreteDialect = dialect
+    elif env_dialect in ("openai", "anthropic"):
+        effective = cast("ConcreteDialect", env_dialect)
     elif candidate_base:
         effective = detect_dialect(candidate_base, candidate_key, "auto")
     elif env.get("ANTHROPIC_BASE_URL") and not env.get("OPENAI_BASE_URL"):
         effective = "anthropic"
+    elif env.get("OPENAI_BASE_URL") and not env.get("ANTHROPIC_BASE_URL"):
+        effective = "openai"
+    elif env.get("OPENAI_BASE_URL") and env.get("ANTHROPIC_BASE_URL"):
+        # Both standard groups present and no base/key to disambiguate:
+        # documented default is OpenAI; standard env always beats a profile.
+        effective = detect_dialect(None, candidate_key, "auto")
+    elif profile_base or profile_key or profile_dialect in ("openai", "anthropic"):
+        effective = detect_dialect(
+            profile_base,
+            profile_key,
+            cast(
+                "Dialect",
+                profile_dialect
+                if profile_dialect in ("openai", "anthropic")
+                else "auto",
+            ),
+        )
     else:
         effective = detect_dialect(None, candidate_key, "auto")
 
     std_base, std_key, std_model = _env_group(effective)
 
-    resolved_base = candidate_base or env.get(std_base)
+    resolved_base = candidate_base or env.get(std_base) or profile_base
     if resolved_base is None:
         resolved_base = (
             _ANTHROPIC_DEFAULT_BASE
@@ -148,15 +180,16 @@ def load_config(
             else _OPENAI_DEFAULT_BASE
         )
 
-    resolved_key = candidate_key or env.get(std_key)
+    resolved_key = candidate_key or env.get(std_key) or profile_key
     if resolved_key is None and effective == "anthropic":
         resolved_key = env.get("ANTHROPIC_AUTH_TOKEN")
 
-    resolved_model = model or supex_model or env.get(std_model)
+    resolved_model = model or supex_model or env.get(std_model) or profile.get("model")
     if not resolved_model:
         raise ConfigError(
             "no model configured; set SUPEX_AI_MODEL (or OPENAI_MODEL / "
-            "ANTHROPIC_MODEL) or pass --model"
+            "ANTHROPIC_MODEL), pass --model, or add a 'model' to your "
+            "provider profile"
         )
 
     temperature_value = (

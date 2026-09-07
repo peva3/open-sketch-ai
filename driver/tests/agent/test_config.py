@@ -150,6 +150,87 @@ class TestLoadConfigPrecedence:
             load_config(env={"OPENAI_BASE_URL": "https://api.openai.com/v1"})
 
 
+class TestLoadConfigProfile:
+    """Profile mappings are the weakest user source (flags > env > profile)."""
+
+    UNSLOTH = {
+        "base_url": "http://localhost:8000",
+        "api_key": "sk-unsloth-test",
+        "model": "qwen3-local",
+        "dialect": "anthropic",
+    }
+
+    def test_profile_fills_gaps_when_no_env(self):
+        cfg = load_config(profile=dict(self.UNSLOTH), env={})
+        assert cfg.base_url == "http://localhost:8000"
+        assert cfg.api_key == "sk-unsloth-test"
+        assert cfg.model == "qwen3-local"
+        assert cfg.dialect == "anthropic"
+
+    def test_profile_dialect_autodetected_from_base(self):
+        profile = {
+            "base_url": "http://localhost:8000/v1/messages",
+            "model": "m",
+        }
+        cfg = load_config(profile=profile, env={})
+        assert cfg.dialect == "anthropic"
+
+    def test_env_beats_profile(self):
+        env = _env(OPENAI_MODEL="gpt-from-env")
+        profile = dict(self.UNSLOTH)
+        cfg = load_config(profile=profile, env=env)
+        # env resolves dialect openai -> openai group wins over profile fields
+        assert cfg.dialect == "openai"
+        assert cfg.base_url == "https://api.openai.com/v1"
+        assert cfg.model == "gpt-from-env"
+
+    def test_explicit_kwargs_beat_profile(self):
+        cfg = load_config(
+            base_url="http://cli.example/v1",
+            model="cli-model",
+            profile=dict(self.UNSLOTH),
+            env={},
+        )
+        assert cfg.base_url == "http://cli.example/v1"
+        assert cfg.model == "cli-model"
+
+    def test_supex_env_beats_profile(self):
+        env = {
+            "SUPEX_AI_BASE_URL": "http://supex.example/v1",
+            "SUPEX_AI_MODEL": "supex-model",
+        }
+        cfg = load_config(profile=dict(self.UNSLOTH), env=env)
+        assert cfg.base_url == "http://supex.example/v1"
+        assert cfg.model == "supex-model"
+
+    def test_anthropic_only_env_group_beats_openai_profile(self):
+        env = {
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_API_KEY": "sk-ant-x",
+            "ANTHROPIC_MODEL": "claude-env",
+        }
+        profile = {"base_url": "http://localhost:1", "model": "profile-model"}
+        cfg = load_config(profile=profile, env=env)
+        assert cfg.dialect == "anthropic"
+        assert cfg.base_url == "https://api.anthropic.com"
+        assert cfg.model == "claude-env"
+
+    def test_profile_model_alone_satisfies_requirement(self):
+        cfg = load_config(
+            profile={"base_url": "http://localhost:1", "model": "only-model"},
+            env={},
+        )
+        assert cfg.model == "only-model"
+
+    def test_missing_model_still_raises_with_profile(self):
+        with pytest.raises(ConfigError, match="no model configured"):
+            load_config(profile={"base_url": "http://localhost:1"}, env={})
+
+    def test_profile_api_key_not_logged_in_repr(self):
+        cfg = load_config(profile=dict(self.UNSLOTH), env={})
+        assert "sk-unsloth-test" not in repr(cfg)
+
+
 class TestLoadConfigScalars:
     def test_defaults_when_unset(self):
         cfg = load_config(env={"OPENAI_MODEL": "m"})

@@ -28,6 +28,7 @@ from supex_driver.agent import load_config
 from supex_driver.agent.agent import Agent
 from supex_driver.agent.config import ProviderConfig
 from supex_driver.agent.errors import AgentError, ConfigError
+from supex_driver.agent.profiles import resolve_profile
 from supex_driver.agent.providers.base import (
     Done,
     ProviderEvent,
@@ -122,6 +123,13 @@ MaxTokensOpt = Annotated[
 ]
 MaxIterOpt = Annotated[
     int | None, typer.Option("--max-iterations", help="Max tool iterations per turn.")
+]
+ProviderProfileOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--provider-profile",
+        help="Named profile from the user profiles.toml (see --help for location).",
+    ),
 ]
 
 
@@ -349,6 +357,7 @@ def chat(
     temperature: TemperatureOpt = None,
     max_tokens: MaxTokensOpt = None,
     max_iterations: MaxIterOpt = None,
+    provider_profile: ProviderProfileOpt = None,
 ) -> None:
     """Run the agent in the terminal (interactive by default)."""
     if ctx.invoked_subcommand is not None:
@@ -368,6 +377,7 @@ def chat(
         temperature=temperature,
         max_tokens=max_tokens,
         max_iterations=max_iterations,
+        provider_profile=provider_profile,
     )
     if list_models:
         asyncio.run(_print_models(config, printer))
@@ -393,6 +403,7 @@ def serve(
     temperature: TemperatureOpt = None,
     max_tokens: MaxTokensOpt = None,
     max_iterations: MaxIterOpt = None,
+    provider_profile: ProviderProfileOpt = None,
     host: Annotated[
         str, typer.Option("--host", help="Bind host (loopback default).")
     ] = "127.0.0.1",
@@ -416,6 +427,7 @@ def serve(
         temperature=temperature,
         max_tokens=max_tokens,
         max_iterations=max_iterations,
+        provider_profile=provider_profile,
     )
     server = AgentServer(
         config=config,
@@ -449,6 +461,7 @@ def _load_config_from(
     temperature: float | None,
     max_tokens: int | None,
     max_iterations: int | None,
+    provider_profile: str | None = None,
 ) -> ProviderConfig:
     kwargs = _config_kwargs(
         model=model,
@@ -462,7 +475,10 @@ def _load_config_from(
         max_iterations=max_iterations,
     )
     try:
-        return load_config(**kwargs)
+        profile = resolve_profile(
+            provider_profile or os.environ.get("SUPEX_AI_PROFILE")
+        )
+        return load_config(profile=profile, **kwargs)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise typer.Exit(2) from exc
