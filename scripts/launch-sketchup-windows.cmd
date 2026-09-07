@@ -35,6 +35,8 @@ for /d %%D in (
 ) do (
     if exist "%%D\SketchUp.exe" set "SKETCHUP_EXE=%%D\SketchUp.exe"
     if defined SKETCHUP_EXE goto :exe_ok
+    if exist "%%D\SketchUp\SketchUp.exe" set "SKETCHUP_EXE=%%D\SketchUp\SketchUp.exe"
+    if defined SKETCHUP_EXE goto :exe_ok
 )
 
 rem Last resort: something on PATH.
@@ -99,5 +101,31 @@ if defined MODEL_ARG (
 )
 
 echo.
-echo SketchUp started. Verify the bridge with:  supex-chat --check
+echo SketchUp started. Waiting for the Supex bridge on 127.0.0.1:9876...
+set "BRIDGE_UP="
+set /a TRIES=0
+:waitbr
+if defined BRIDGE_UP goto :bridge_up
+set /a TRIES+=1
+if %TRIES% GTR 15 (
+    echo.
+    echo The Supex bridge did not come up within ~15 seconds.
+    echo Re-launch with --console to see runtime logs, then check the
+    echo SketchUp Ruby Console (Window - Ruby Console) for errors.
+    echo You can still run:  supex-chat --check   to probe again.
+    pause
+    exit /b 1
+)
+rem Test the TCP port using PowerShell (no extra tooling needed).
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Test-NetConnection -ComputerName 127.0.0.1 -Port 9876 -WarningAction SilentlyContinue).TcpTestSucceeded" 2^>nul`) do (
+    if /i "%%i"=="True" set "BRIDGE_UP=1"
+)
+if not defined BRIDGE_UP timeout /t 1 /nobreak >nul
+goto :waitbr
+
+:bridge_up
+echo.
+echo Supex bridge is UP on 127.0.0.1:9876.
+echo Now you can launch the chat app:  run-supex-chat.cmd
+echo (or from a terminal:  supex-chat serve)
 pause
