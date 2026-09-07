@@ -290,6 +290,31 @@ invocation (see [Configuration](#configuration) above); you can set them in
 `run-supex-chat.cmd` or, better, in a named profile so the app finds them
 without a terminal.
 
+#### First, the SketchUp runtime must be running
+
+The binaries are self-contained on the Python side, but the agent only works
+when the **Supex Ruby runtime** is loaded inside SketchUp (it listens on
+`127.0.0.1:9876`). SketchUp 2026 ships an embedded Ruby, so nothing extra is
+installed — the runtime sources are injected at launch:
+
+- `scripts/launch-sketchup-windows.cmd` — double-click after SketchUp is
+  installed. It finds `SketchUp.exe` (or use the `SUPEX_SKETCHUP_EXE`
+  environment variable), resolves this repo's
+  `runtime/src/injector.rb`, and launches SketchUp with
+  `-RubyStartup` so the extension starts automatically. Optional first
+  argument is a `.skp` model to open. `--console` turns on verbose logging.
+- The repo must stay on the machine: the runtime runs from `runtime/src/`
+  sources (dev-style injection), not from the PyInstaller binaries.
+
+Only **after** the bridge is up (watch the SketchUp console, or run
+`supex-chat --check`) do you start `run-supex-chat.cmd`. Both processes are
+local; they share `SUPEX_AUTH_TOKEN` if you use one.
+
+> Packaged alternative: `cd runtime && bundle exec rake build` produces
+> `Supex-Runtime.rbz` (bundles the stdlib). Install that via
+> *Window > Extension Manager* and launch SketchUp normally — that is how the
+> runtime ships to end users who do not have a repo checkout.
+
 Falling back to a source install works too: with Python 3.14 and uv,
 
 ```bash
