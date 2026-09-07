@@ -104,6 +104,12 @@ class AgentLoop:
             getattr(provider, "dialect", "openai") == "anthropic"
         )
         self.history: list[Message] = []
+        # Cumulative usage across every turn of this session (across calls to
+        # run_turn). Reset only by dropping the loop (Agent.reset_conversation).
+        self._total_input = 0
+        self._total_output = 0
+        self._total_tokens = 0
+        self._usage_seen = False
 
     async def _stream_once(self) -> tuple[str, list[ToolCallEvent], Usage | None]:
         """Run one model turn; return (text, tool calls, usage)."""
@@ -121,7 +127,34 @@ class AgentLoop:
                 calls.append(event)
             elif isinstance(event, Done):
                 usage = event.usage or usage
+                self._accumulate_usage(event.usage)
         return "".join(text_parts), calls, usage
+
+    def _accumulate_usage(self, usage: Usage | None) -> None:
+        """Add one model turn's reported usage to the session total."""
+        if usage is None:
+            return
+        self._usage_seen = True
+        if usage.input_tokens is not None:
+            self._total_input += usage.input_tokens
+        if usage.output_tokens is not None:
+            self._total_output += usage.output_tokens
+        if usage.total_tokens is not None:
+            self._total_tokens += usage.total_tokens
+
+    @property
+    def total_usage(self) -> Usage | None:
+        """Cumulative provider-reported usage for this session, or None."""
+        if not self._usage_seen:
+            return None
+        total = self._total_tokens or None
+        if total is None and (self._total_input or self._total_output):
+            total = self._total_input + self._total_output
+        return Usage(
+            input_tokens=self._total_input,
+            output_tokens=self._total_output,
+            total_tokens=total,
+        )
 
     @staticmethod
     def _drop_dangling_tool_calls(history: list[Message]) -> None:

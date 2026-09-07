@@ -177,6 +177,33 @@ async def test_usage_reported_when_present() -> None:
 
     result = await loop.run_turn("hi")
     assert result.usage == usage
+    assert loop.total_usage == usage
+
+
+async def test_total_usage_accumulates_across_turns() -> None:
+    first = Usage(input_tokens=5, output_tokens=7, total_tokens=12)
+    second = Usage(input_tokens=10, output_tokens=3, total_tokens=13)
+    provider = ScriptedProvider([_single_turn("a", first), _single_turn("b", second)])
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute)
+
+    await loop.run_turn("q1")
+    await loop.run_turn("q2")
+
+    total = loop.total_usage
+    assert total is not None
+    assert total.input_tokens == 15
+    assert total.output_tokens == 10
+    assert total.total_tokens == 25
+
+
+async def test_total_usage_none_before_any_usage() -> None:
+    provider = ScriptedProvider([_single_turn("plain")])
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute)
+
+    await loop.run_turn("hi")
+    assert loop.total_usage is None
 
 
 async def test_images_attached_to_user_message() -> None:

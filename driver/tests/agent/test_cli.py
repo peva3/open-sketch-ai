@@ -12,7 +12,7 @@ from supex_driver.agent import agent as agent_mod
 from supex_driver.agent import cli as cli_mod
 from supex_driver.agent.config import ProviderConfig
 from supex_driver.agent.errors import AgentError
-from supex_driver.agent.providers.base import Done, TextDelta, ToolSchema
+from supex_driver.agent.providers.base import Done, TextDelta, ToolSchema, Usage
 from tests.agent.fakes import FakeBackend, ScriptedProvider
 
 ENV_KEYS = [
@@ -324,7 +324,32 @@ class TestSlashModelAndReset:
         assert handled is True
         out = capsys.readouterr().out
         assert "backend tools: 7" in out
+        assert "messages in session: 0" in out
         assert backend.calls and backend.calls[0][0] == "check_status"
+        await agent.aclose()
+
+    async def test_status_reports_cumulative_usage(
+        self, monkeypatch, plain_printer, capsys
+    ):
+        usage = Usage(input_tokens=3, output_tokens=4, total_tokens=7)
+        backend = FakeBackend([ToolSchema(name="check_status", description="health")])
+        monkeypatch.setattr(agent_mod, "SketchUpMCP", lambda **kw: backend)
+        agent = agent_mod.Agent(
+            config=_config(),
+            provider=ScriptedProvider(
+                dialect="openai",
+                turns=[
+                    [TextDelta("first"), Done("end_turn", usage)],
+                    [TextDelta("second"), Done("end_turn", usage)],
+                ],
+            ),
+        )
+        await agent.run_turn("q1")
+        await agent.run_turn("q2")
+        await cli_mod._slash_command(agent, plain_printer, "/status")
+        out = capsys.readouterr().out
+        assert "usage: 6 in, 8 out, 14 total" in out
+        assert "messages in session: 4" in out
         await agent.aclose()
 
     async def test_reset_forgets_history(self, monkeypatch, plain_printer, capsys):

@@ -31,6 +31,7 @@ from supex_driver.agent.providers.base import (
     Message,
     ProviderEvent,
     ToolSchema,
+    Usage,
 )
 from supex_driver.agent.sketchup_mcp import SketchUpMCP
 
@@ -61,7 +62,7 @@ def _image_path_tokens(text: str) -> list[str]:
     candidates: list[str] = []
     try:
         payload = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         payload = None
     if isinstance(payload, (dict, list)):
         stack: list[Any] = [payload]
@@ -124,6 +125,13 @@ class Agent:
         if self._loop is None:
             return []
         return self._loop.history
+
+    @property
+    def total_usage(self) -> Usage | None:
+        """Cumulative provider-reported token usage, or None."""
+        if self._loop is None:
+            return None
+        return self._loop.total_usage
 
     async def _ensure_loop(self) -> AgentLoop:
         if self._loop is None:

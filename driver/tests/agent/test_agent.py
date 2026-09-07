@@ -10,7 +10,13 @@ import pytest
 import supex_driver.agent.agent as agent_mod
 from supex_driver.agent.agent import Agent
 from supex_driver.agent.config import ProviderConfig
-from supex_driver.agent.providers.base import Done, TextDelta, ToolCallEvent, ToolSchema
+from supex_driver.agent.providers.base import (
+    Done,
+    TextDelta,
+    ToolCallEvent,
+    ToolSchema,
+    Usage,
+)
 from tests.agent.fakes import FakeBackend, ScriptedProvider
 
 
@@ -180,6 +186,30 @@ async def test_history_and_reset(backend, tmp_path) -> None:
 
     agent.reset_conversation()
     assert agent.history == []
+
+
+async def test_total_usage_reported_and_reset(backend, tmp_path) -> None:
+    usage = Usage(input_tokens=5, output_tokens=7, total_tokens=12)
+    agent = Agent(
+        config=_config(),
+        provider=ScriptedProvider(
+            [
+                [TextDelta("one"), Done("end_turn", usage)],
+                [TextDelta("two"), Done("end_turn", usage)],
+            ]
+        ),
+        workspace=tmp_path,
+    )
+    assert agent.total_usage is None
+    await agent.run_turn("first")
+    await agent.run_turn("second")
+    total = agent.total_usage
+    assert total is not None
+    assert total.input_tokens == 10
+    assert total.output_tokens == 14
+
+    agent.reset_conversation()
+    assert agent.total_usage is None
 
 
 async def test_aclose_closes_backend_and_provider(backend, tmp_path) -> None:

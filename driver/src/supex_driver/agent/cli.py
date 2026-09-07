@@ -253,10 +253,16 @@ async def _slash_command(agent: Agent, printer: EventPrinter, cmd: str) -> bool:
         printer.banner(f"{len(tools)} tools available", style="dim")
     elif name == "/status":
         status = await agent.backend_status()
-        printer.banner(
-            f"backend tools: {status['tools']}\ncheck_status: {status['check_status']}",
-            style="cyan",
-        )
+        lines = [
+            f"backend tools: {status['tools']}",
+            f"check_status: {status['check_status']}",
+        ]
+        usage = agent.total_usage
+        messages = len(agent.history)
+        if usage is not None:
+            lines.append(_usage_text(usage))
+        lines.append(f"messages in session: {messages}")
+        printer.banner("\n".join(lines), style="cyan")
     elif name == "/reset":
         agent.reset_conversation()
         printer.banner("conversation reset", style="green")
