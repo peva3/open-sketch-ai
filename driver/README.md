@@ -17,7 +17,18 @@ Supex Driver is part of the Supex platform - a bridge between AI agents and Sket
 
 ## Supex Chat Agent
 
-`driver/src/supex_driver/agent/` adds `supex-chat` (console script), a provider-agnostic terminal agent that drives SketchUp through the same MCP server Claude Code uses. It speaks OpenAI- and Anthropic-compatible APIs (including local servers such as Unsloth Desktop) configured via `base_url` + `api_key` + `model`. See `docs/agent.md` for the full reference.
+`driver/src/supex_driver/agent/` adds `supex-chat` (console script), a provider-agnostic agent that drives SketchUp through the same MCP server Claude Code uses. It speaks OpenAI- and Anthropic-compatible APIs (including local servers such as Unsloth Desktop) configured via `base_url` + `api_key` + `model`. See `docs/agent.md` for the full reference.
+
+### Intended workflow
+
+You type a prompt into a chat window; whatever you ask for is applied **live inside the running SketchUp application** — the agent authors Ruby (`.rb`) or VCAD (`.cmp.oo`) sources in the workspace and runs them in-process via `eval_ruby_file`, so geometry appears in SketchUp with no import/export round-trips. The model then **screenshots its own output**; when vision is enabled, the agent reads the PNG and attaches it to the next model turn so the model can verify and self-correct.
+
+### Interface roadmap
+
+- **Windowed chat app (first):** the agent runs as a persistent local server (`supex-chat serve`) serving a dependency-free chat UI on `127.0.0.1` — open it in the default browser, or later embed the same URL inside SketchUp via `UI::HtmlDialog`.
+- **Terminal CLI (peer interface):** interactive `supex-chat` session or `--prompt` one-shot.
+- Both share a single `Agent` loop + event stream (`driver/src/supex_driver/agent/agent.py`), so behavior is identical across windows and terminals.
+- Tracked in `TODO.md` Phases 4-5 (windowed app + CLI); in-SketchUp embedding is a staged additive milestone (`TODO.md` T-4.7).
 
 ### Supported platforms
 
@@ -26,7 +37,7 @@ The agent runs on **Windows, Linux, and macOS**. It is delivered as **self-conta
 - The canonical entry point is the `supex-chat` console script / binary; the repo-root `sketch` wrapper is a Unix convenience only.
 - When running the agent from source, the SketchUp MCP backend is spawned as `python -m supex_driver.mcp` (same interpreter). When running an installed/frozen binary, a sibling `supex-mcp` executable is used. The repo `./mcp` bash wrapper is never assumed.
 - Agent guide content (`docs/agents/guide/*.md`) is bundled as package data so prompts resolve without a repo checkout.
-- See `driver/packaging/` and `TODO.md` Phase 7 for the binary build recipe and per-OS build matrix.
+- See `driver/packaging/` and `TODO.md` Phase 8 for the binary build recipe and per-OS build matrix.
 
 ## Configuration
 
@@ -195,13 +206,21 @@ driver/
 |   |   +-- main.py                  # Typer CLI commands
 |   |   +-- output.py                # Rich/plain output formatting
 |   +-- agent/                       # Provider-agnostic chat agent (supex-chat)
+|   |   +-- __init__.py              # Public Agent API + config re-exports
 |   |   +-- config.py                # Provider/env config resolution
+|   |   +-- errors.py                # Agent error hierarchy
 |   |   +-- providers/               # OpenAI + Anthropic dialect clients
+|   |   |   +-- base.py              # ChatProvider protocol + event dataclasses
+|   |   |   +-- openai.py            # OpenAI /v1/chat/completions dialect
+|   |   |   +-- anthropic.py         # Anthropic /v1/messages dialect
 |   |   +-- sketchup_mcp.py          # MCP client backend (SketchUp tools)
 |   |   +-- file_tools.py            # Workspace file tools
 |   |   +-- prompts.py               # Guide-derived system prompt
 |   |   +-- loop.py                  # Agentic loop
-|   |   +-- cli.py                   # supex-chat CLI
+|   |   +-- agent.py                 # Public Agent facade (single shared core)
+|   |   +-- server.py                # Local agent server (windowed app; Phase 4)
+|   |   +-- chat_ui/                 # Dependency-free chat web UI (Phase 4)
+|   |   +-- cli.py                   # supex-chat CLI + serve entry
 |   +-- connection/
 |       +-- sketchup_connection.py   # TCP socket client for the runtime
 |       +-- sketchup_exceptions.py   # SketchUp error hierarchy
