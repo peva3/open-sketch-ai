@@ -27,22 +27,36 @@ set "INJECTOR=%REPO_ROOT%\runtime\src\injector.rb"
 rem --- resolve SketchUp executable -----------------------------
 set "SKETCHUP_EXE=%SUPEX_SKETCHUP_EXE%"
 if defined SKETCHUP_EXE goto :exe_ok
-if exist "C:\Program Files\SketchUp\SketchUp 2026\SketchUp.exe" (
-    set "SKETCHUP_EXE=C:\Program Files\SketchUp\SketchUp 2026\SketchUp.exe"
-    goto :exe_ok
+
+rem Scan any version folder under the default SketchUp install roots.
+for /d %%D in (
+    "C:\Program Files\SketchUp\*"
+    "C:\Program Files (x86)\SketchUp\*"
+) do (
+    if exist "%%D\SketchUp.exe" set "SKETCHUP_EXE=%%D\SketchUp.exe"
+    if defined SKETCHUP_EXE goto :exe_ok
 )
-if exist "C:\Program Files\SketchUp\SketchUp 2025\SketchUp.exe" (
-    set "SKETCHUP_EXE=C:\Program Files\SketchUp\SketchUp 2025\SketchUp.exe"
-    goto :exe_ok
-)
+
+rem Last resort: something on PATH.
 for /f "delims=" %%i in ('where sketchup.exe 2^>nul') do (
     set "SKETCHUP_EXE=%%i"
     goto :exe_ok
 )
-echo SketchUp.exe was not found.
-echo Set SUPEX_SKETCHUP_EXE to its full path and re-run.
-pause
-exit /b 1
+
+rem Interactive fallback so a missed path is not a dead end.
+echo.
+echo SketchUp.exe was not found in the usual places.
+echo Type the full path to SketchUp.exe and press Enter.
+echo (On SketchUp 2026 this is usually:)
+echo    C:\Program Files\SketchUp\SketchUp 2026\SketchUp.exe
+set /p "SKETCHUP_EXE=Path: "
+if not exist "%SKETCHUP_EXE%" (
+    echo.
+    echo No valid SketchUp.exe at that path.
+    echo Tip: set SUPEX_SKETCHUP_EXE to the full path and re-run.
+    pause
+    exit /b 1
+)
 :exe_ok
 
 if not exist "%INJECTOR%" (
