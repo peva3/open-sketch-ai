@@ -4,6 +4,8 @@ Tracking document for the project work. Task states: `[ ]` open, `[x]` done, `[~
 The user tests on Windows + SketchUp 2026; this Linux box has no SketchUp, no Ruby — so most *code* work happens here and most *runtime verification* happens on the user's machine or in CI.
 
 > **Git decision (user, 2026-09-07):** commit work to `main` (this fork is solo; `open-sketch-ai/AGENTS.md`'s dev-branch guidance is waived by explicit user choice). TODO.md was committed as `dbcdf46` on `main`. Phases 1-3 committed as `0219c82`.
+>
+> **Integrity fix (2026-09-07):** two Python 2-style `except A, B:` clauses (invalid Python 3) were found in committed code — `agent/agent.py` (`_image_path_tokens`) and `agent/file_tools.py` (`FileTools.call`) — plus a missing `BackendError` import surfaced while adding `Agent.backend_status`. All fixed and verified (`ruff`/`mypy` clean; agent suite genuinely green). This underscored that earlier "tests pass" notes must be re-verified against the real tree before each commit.
 
 ---
 
@@ -98,15 +100,15 @@ Goal: the user types a prompt into a **window**, the model's edits appear **live
 
 Goal: terminal interface to the same `Agent` core, canonical cross-platform console entry. (Windowed app is Phase 4; terminal is a peer interface, not the primary distribution path.)
 
-- [ ] **T-5.1** `agent/cli.py` (Typer, consistent with `cli/main.py` style) — entry `supex-chat`. Subcommands/flags:
-  - `supex-chat` → interactive session (multiline input; slash commands `/help`, `/model`, `/tools`, `/status`, `/reset`, `/exit`).
-  - `supex-chat serve` → launch the Phase 4 windowed app (server + browser).
+- [x] **T-5.1** `agent/cli.py` (Typer, consistent with `cli/main.py` style) — entry `supex-chat`. Subcommands/flags:
+  - `supex-chat` → interactive session (slash commands `/help`, `/model`, `/tools`, `/status`, `/reset`, `/exit`).
+  - `supex-chat serve` → launch the Phase 4 windowed app (server + browser; `--no-open` to skip).
   - `--prompt "…"` / `-p` one-shot non-interactive run.
-  - `--base-url`, `--api-key`, `--model`, `--dialect`, `--provider`-profile, `--list-models`, `--check`, `--version`.
-  - Respect existing output env (`SUPEX_PLAIN`/`SUPEX_COLOR`/TTY) and logging (`SUPEX_LOG_DIR` → e.g. `agent-chat.log`).
-- [ ] **T-5.2** Rich rendering of model stream (minimal markdown-ish streaming) + tool-call notices + error surfacing; Ctrl-C cancels current turn (keeps session). Console/ANSI handling respects `NO_COLOR`; works in `cmd`/`pwsh`/Windows Terminal as well as POSIX TTYs.
-- [ ] **T-5.3** Console entry `supex-chat = "supex_driver.agent.cli:main"` added in `driver/pyproject.toml` — **canonical, cross-platform entry** (works via `uv run`, `uv tool install`, pipx, and is what PyInstaller wraps in Phase 8). Root wrapper `sketch` (bash, portable shebang) is a **Unix convenience only** and documented as such; it is NOT the distribution path.
-- [ ] **T-5.4** Unit tests for CLI arg parsing/config resolution + slash-command routing (`driver/tests/agent/test_cli.py`); no live I/O.
+  - `--base-url`, `--api-key`, `--model`, `--dialect`, `--list-models`, `--check`, `--version`, plus `--vision/--no-vision`, `--allow-delete`, `--timeout`, `--temperature`, `--max-tokens`, `--max-iterations`. (`--provider-profile` deferred to T-6.1, which owns the profiles file.)
+  - Respect existing output env (`SUPEX_PLAIN`/`SUPEX_COLOR`/TTY via plain text vs rich Console) and logging (`SUPEX_LOG_DIR` → `agent-chat.log`, mirrors `cli/main.py` lazy file logger). **Done:** Typer app `invoke_without_command=True`; `_ensure_logging`; `_config_kwargs` (guards unknown dialect → `typer.BadParameter`); `_load_config_from` (ConfigError → exit 2); `EventPrinter` streams `TextDelta`/tool banners/usage; `_slash_command` router; `_interactive_async`, `_run_one_turn`, `_one_shot`, `_print_models`, `_run_check`, `serve`. Requires `Agent.config` + `Agent.backend_status()` helpers added to `agent.py` (`backend_status` runs the `check_status` MCP tool; never raises for a disconnected SketchUp).
+- [x] **T-5.2** Rich rendering of model stream (live `TextDelta` write-out via rich Console with `markup=False`/plain stdout) + tool-call notices + error surfacing; Ctrl-C interrupts a turn in the REPL (banner) and exits cleanly at the prompt; NO_COLOR/plain honored by `EventPrinter`; works in `cmd`/`pwsh`/Windows Terminal (plain text) as well as POSIX TTYs. **Done.**
+- [x] **T-5.3** Console entry `supex-chat = "supex_driver.agent.cli:main"` added in `driver/pyproject.toml` — canonical, cross-platform. Root wrapper `sketch` (bash, portable shebang) added as a Unix convenience only, mirroring the `supex` wrapper's symlink resolution + `FORCE_COLOR` + log-tee; documented in its header comment.
+- [x] **T-5.4** Unit tests `driver/tests/agent/test_cli.py` — 21 tests, no live I/O: config-knob collection + invalid-dialect rejection; env-vs-flag precedence and missing-model exit 2 via `_load_config_from`; `EventPrinter` streaming/plain/banners/usage; slash-command routing (`/help`, `/model`, `/tools`, `/status`, `/reset`, `/exit`, unknown, non-slash passthrough) against `Agent`+`FakeBackend`; one-shot final-text and `AgentError` surfacing. **917 driver tests pass** (was 896). Verified live: `uv run python -m supex_driver.agent.cli --version` → `supex-chat 0.3.0`, `--help` shows the full option set.
 
 ## Phase 6 — Config profiles, robustness, real-endpoint hardening
 

@@ -81,9 +81,7 @@ def _usage_dict(usage: Any) -> dict[str, int | None] | None:
 
 
 def _image_dicts(images: Sequence[ImagePart]) -> list[dict[str, str]]:
-    return [
-        {"media_type": image.media_type, "data": image.data} for image in images
-    ]
+    return [{"media_type": image.media_type, "data": image.data} for image in images]
 
 
 class AgentServer:
@@ -296,7 +294,9 @@ class AgentServer:
     def _finish_chat(self) -> None:
         self._queue = None
 
-    def _parse_chat_payload(self, payload: dict[str, Any]) -> tuple[str, list[ImagePart]]:
+    def _parse_chat_payload(
+        self, payload: dict[str, Any]
+    ) -> tuple[str, list[ImagePart]]:
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ValueError("body must include a non-empty 'text' string")
@@ -367,7 +367,9 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
 
         def _do_chat(self) -> None:
             if not server._lock.acquire(blocking=False):
-                self._send_json(409, {"ok": False, "error": "a turn is already running"})
+                self._send_json(
+                    409, {"ok": False, "error": "a turn is already running"}
+                )
                 return
             try:
                 payload = self._read_json()
@@ -447,7 +449,8 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
             media = _CONTENT_TYPES.get(candidate.suffix.lower())
             if media is None:
                 self._send_json(
-                    404, {"ok": False, "error": f"unsupported file type {candidate.suffix}"}
+                    404,
+                    {"ok": False, "error": f"unsupported file type {candidate.suffix}"},
                 )
                 return
             body = candidate.read_bytes()

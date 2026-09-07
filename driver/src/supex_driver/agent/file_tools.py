@@ -178,7 +178,7 @@ class FileTools:
         impl = getattr(self, name)
         try:
             return await impl(arguments)
-        except PathNotAllowedError, FileToolError:
+        except (PathNotAllowedError, FileToolError):
             raise
         except OSError as exc:
             return self._json({"ok": False, "error": f"{exc.strerror or exc}"})

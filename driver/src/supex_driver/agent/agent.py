@@ -16,6 +16,7 @@ from typing import Any
 
 from supex_driver.agent.config import ProviderConfig
 from supex_driver.agent.errors import (
+    BackendError,
     BackendToolError,
     FileToolError,
     PathNotAllowedError,
@@ -60,7 +61,7 @@ def _image_path_tokens(text: str) -> list[str]:
     candidates: list[str] = []
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         payload = None
     if isinstance(payload, (dict, list)):
         stack: list[Any] = [payload]
@@ -144,10 +145,31 @@ class Agent:
             )
         return self._loop
 
+    @property
+    def config(self) -> ProviderConfig:
+        """The resolved provider configuration for this session."""
+        return self._config
+
     async def tools(self) -> list[ToolSchema]:
         """Expose the combined tool schema set (connects the backend)."""
         loop = await self._ensure_loop()
         return list(loop.tools)
+
+    async def backend_status(self) -> dict[str, Any]:
+        """Ping the SketchUp backend and report its health.
+
+        Connects the loop (listing tools) then runs the ``check_status`` MCP
+        tool against the runtime. Returns the tool count plus the raw status
+        text so callers (``--check``, ``/status``) can render it. Never raises
+        for a disconnected SketchUp -- the runtime reports that state in the
+        status text; only a broken MCP backend raises :class:`BackendError`.
+        """
+        tools = await self.tools()
+        try:
+            status_text = await self._sketchup.call_tool("check_status", {})
+        except BackendError as exc:
+            status_text = f"backend error: {exc}"
+        return {"tools": len(tools), "check_status": status_text}
 
     def _visual_images(
         self, name: str, arguments: dict[str, Any], result: str

@@ -41,9 +41,7 @@ _VisualExtractor = Callable[[str, dict[str, Any], str], Sequence[ImagePart]]
 # Tool id/name/arguments/result-text/images fired after each executed tool
 # call, so every consumer (terminal CLI, chat server, UI) renders tool
 # activity the same way.
-ToolResultHandler = Callable[
-    [str, str, dict[str, Any], str, Sequence[ImagePart]], None
-]
+ToolResultHandler = Callable[[str, str, dict[str, Any], str, Sequence[ImagePart]], None]
 
 _TOOL_RESULT_CAP = 20_000
 _VISUAL_NOTE = (
@@ -219,7 +217,9 @@ class AgentLoop:
                     )
                     visual_parts.extend(images)
                 if self.on_tool_result is not None:
-                    self.on_tool_result(call.id, call.name, arguments, truncated, images)
+                    self.on_tool_result(
+                        call.id, call.name, arguments, truncated, images
+                    )
             if visual_parts:
                 self.history.append(
                     Message(role="user", content=_VISUAL_NOTE, images=visual_parts)

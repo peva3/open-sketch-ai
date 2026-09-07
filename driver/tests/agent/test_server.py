@@ -103,7 +103,9 @@ def _stop_server(server: AgentServer) -> None:
     server.stop()
 
 
-async def _chat_lines(client: httpx2.AsyncClient, url: str, payload: dict) -> list[dict]:
+async def _chat_lines(
+    client: httpx2.AsyncClient, url: str, payload: dict
+) -> list[dict]:
     """POST a chat turn and parse the NDJSON response into dicts."""
     lines: list[dict] = []
     async with client.stream("POST", f"{url}/api/chat", json=payload) as resp:
@@ -205,7 +207,9 @@ async def test_chat_tool_turn_emits_tool_lines(backend, tmp_path) -> None:
             _final("computed"),
         ]
     )
-    server = _start_server(_config(), provider=provider, workspace=tmp_path, backend=backend)
+    server = _start_server(
+        _config(), provider=provider, workspace=tmp_path, backend=backend
+    )
     try:
         async with httpx2.AsyncClient() as client:
             lines = await _chat_lines(client, server.url, {"text": "please compute"})
@@ -284,7 +288,9 @@ async def test_chat_rejects_malformed_json(backend, tmp_path) -> None:
     try:
         async with httpx2.AsyncClient() as client:
             resp = await client.post(
-                f"{server.url}/api/chat", content=b"{not json", headers={"Content-Type": "application/json"}
+                f"{server.url}/api/chat",
+                content=b"{not json",
+                headers={"Content-Type": "application/json"},
             )
         assert resp.status_code == 400
         assert resp.json()["ok"] is False

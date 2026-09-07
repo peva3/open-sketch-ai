@@ -461,4 +461,3 @@ async def test_on_tool_result_reports_each_execution() -> None:
     assert second[2] == {"path": "a.rb"}
     assert second[3] == '{"ok": true}'
     assert second[4] == [image]
-

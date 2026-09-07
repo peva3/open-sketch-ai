@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# supex-chat convenience wrapper (Unix only; supex-chat is the cross-platform entry)
+# Logs stdout/stderr to cli-stdout.log / cli-stderr.log
+
+set -e
+
+# Resolve symlinks to find real script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  # Handle relative symlinks
+  [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SUPEX_ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+# Fallback to ~/.supex/tmp-workspace for ad-hoc CLI usage (not pwd to avoid pollution)
+export SUPEX_WORKSPACE="${SUPEX_WORKSPACE:-$HOME/.supex/tmp-workspace}"
+
+LOG_DIR="${SUPEX_LOG_DIR:-$SUPEX_WORKSPACE/.tmp/logs}"
+mkdir -p "$LOG_DIR"
+
+STDOUT_LOG="$LOG_DIR/cli-stdout.log"
+STDERR_LOG="$LOG_DIR/cli-stderr.log"
+
+# Preserve TTY detection for rich formatting (tee breaks isatty())
+if [ -t 1 ]; then
+  export FORCE_COLOR=1
+fi
+
+# Run supex-chat with logging
+uv run --project "$SUPEX_ROOT/driver" supex-chat "$@" 2> >(tee -a "$STDERR_LOG" >&2) | \
+  tee -a "$STDOUT_LOG"
