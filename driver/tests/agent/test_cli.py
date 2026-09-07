@@ -256,6 +256,21 @@ class TestEventPrinter:
         printer = cli_mod.EventPrinter(plain=True)
         assert printer._console is None
 
+    def test_banner_escapes_model_markup(self, monkeypatch, capsys):
+        class FakeConsole:
+            def __init__(self, *a, **kw):
+                pass
+
+            def print(self, text, **kw):
+                print(text)
+
+        monkeypatch.setattr(cli_mod, "Console", FakeConsole)
+        printer = cli_mod.EventPrinter(plain=False)
+        printer.banner("tool call c1: eval_ruby([yellow]x[/yellow])", style="yellow")
+        out = capsys.readouterr().out
+        assert "\\[yellow]x\\[/yellow]" in out
+        assert "[yellow]tool call" in out
+
 
 class TestSlashRouting:
     async def test_non_slash_returns_false(self, plain_printer):

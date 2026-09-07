@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape as markup_escape
 
 from supex_driver.agent import load_config
 from supex_driver.agent.agent import Agent
@@ -197,7 +198,7 @@ class EventPrinter:
             print(text)
         else:
             assert self._console is not None
-            self._console.print(f"[{style}]{text}[/{style}]")
+            self._console.print(f"[{style}]{markup_escape(text)}[/{style}]")
 
     def on_event(self, event: ProviderEvent) -> None:
         if isinstance(event, TextDelta):
