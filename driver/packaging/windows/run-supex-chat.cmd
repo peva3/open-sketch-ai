@@ -18,9 +18,17 @@ setlocal
 set "EXE_DIR=%~dp0"
 cd /d "%EXE_DIR%"
 
+rem The launcher is copied next to the exes by build-exe.cmd. If you
+rem double-clicked the source copy, look beside it (or in ..\..\dist).
+if not exist "supex-chat.exe" (
+    if exist "dist\supex-chat.exe" cd /d "dist"
+    if exist "..\..\dist\supex-chat.exe" cd /d "..\..\dist"
+)
+
 if not exist "supex-chat.exe" (
     echo supex-chat.exe was not found next to this launcher.
-    echo Run build-exe.cmd first, then launch from the dist folder.
+    echo Run build-exe.cmd first, then launch the run-supex-chat.cmd
+    echo that it places in the dist folder.
     echo.
     pause
     exit /b 1

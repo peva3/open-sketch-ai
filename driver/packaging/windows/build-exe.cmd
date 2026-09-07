@@ -57,11 +57,16 @@ if errorlevel 1 (
 
 rem --- drop the launcher next to the binaries -------------------
 copy /y "%SCRIPT_DIR%run-supex-chat.cmd" "dist\run-supex-chat.cmd" >nul
+if not exist "dist\run-supex-chat.cmd" (
+    echo Warning: could not copy run-supex-chat.cmd into dist.
+    pause
+    exit /b 1
+)
 
 echo.
 echo === Done ===
 echo Executables are in:
-echo    %DRIVER_DIR%dist
+echo    %CD%\dist
 echo.
 echo     supex-chat.exe   the windowed/terminal agent
 echo     supex-mcp.exe    the MCP backend (spawned by supex-chat)
