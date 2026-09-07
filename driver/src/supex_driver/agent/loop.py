@@ -36,8 +36,21 @@ from supex_driver.agent.providers.base import (
 ExecuteTool = Callable[[str, dict[str, Any]], Awaitable[str]]
 StopReason = Literal["end_turn", "tool_limit"]
 _ToolEventHandler = Callable[[ProviderEvent], None]
+# Tool name/arguments/result-text -> images the model should see next turn.
+_VisualExtractor = Callable[[str, dict[str, Any], str], Sequence[ImagePart]]
+# Tool id/name/arguments/result-text/images fired after each executed tool
+# call, so every consumer (terminal CLI, chat server, UI) renders tool
+# activity the same way.
+ToolResultHandler = Callable[
+    [str, str, dict[str, Any], str, Sequence[ImagePart]], None
+]
 
 _TOOL_RESULT_CAP = 20_000
+_VISUAL_NOTE = (
+    "The image(s) above were captured by the tool call you just made. "
+    "Use them to visually verify the current SketchUp state before "
+    "finishing your reply."
+)
 
 
 def truncate_result(text: str, cap: int = _TOOL_RESULT_CAP) -> str:
@@ -74,6 +87,8 @@ class AgentLoop:
         max_iterations: int = 10,
         max_result_chars: int = _TOOL_RESULT_CAP,
         on_event: _ToolEventHandler | None = None,
+        collect_visual: _VisualExtractor | None = None,
+        on_tool_result: ToolResultHandler | None = None,
     ) -> None:
         self.provider = provider
         self.system = system
@@ -82,6 +97,14 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.max_result_chars = max_result_chars
         self.on_event = on_event
+        self.collect_visual = collect_visual
+        self.on_tool_result = on_tool_result
+        # Anthropic can embed image blocks inside tool_result content; the
+        # OpenAI wire format only allows string tool content, so its loop
+        # surfaces captured images via a trailing user message instead.
+        self._images_in_tool_message = (
+            getattr(provider, "dialect", "openai") == "anthropic"
+        )
         self.history: list[Message] = []
 
     async def _stream_once(self) -> tuple[str, list[ToolCallEvent], Usage | None]:
@@ -163,15 +186,43 @@ class AgentLoop:
                     ],
                 )
             )
+            # Captured screenshots the model should see next turn. Anthropic
+            # carries them on the tool message itself; OpenAI needs a trailing
+            # user message because its tool content is string-only.
+            visual_parts: list[ImagePart] = []
             for call in calls:
-                result = await self.execute(call.name, parse_arguments(call.arguments))
+                arguments = parse_arguments(call.arguments)
+                result = await self.execute(call.name, arguments)
                 executed += 1
-                self.history.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=call.id,
-                        content=truncate_result(result, self.max_result_chars),
+                truncated = truncate_result(result, self.max_result_chars)
+                images = (
+                    list(self.collect_visual(call.name, arguments, result))
+                    if self.collect_visual is not None
+                    else []
+                )
+                if self._images_in_tool_message:
+                    self.history.append(
+                        Message(
+                            role="tool",
+                            tool_call_id=call.id,
+                            content=truncated,
+                            images=images,
+                        )
                     )
+                else:
+                    self.history.append(
+                        Message(
+                            role="tool",
+                            tool_call_id=call.id,
+                            content=truncated,
+                        )
+                    )
+                    visual_parts.extend(images)
+                if self.on_tool_result is not None:
+                    self.on_tool_result(call.id, call.name, arguments, truncated, images)
+            if visual_parts:
+                self.history.append(
+                    Message(role="user", content=_VISUAL_NOTE, images=visual_parts)
                 )
 
 

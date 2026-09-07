@@ -7,7 +7,9 @@ tools, the system prompt, and the agentic loop into one object exposing
 
 from __future__ import annotations
 
+import base64
 import json
+import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,7 @@ from supex_driver.agent.errors import (
     PathNotAllowedError,
 )
 from supex_driver.agent.file_tools import FileTools
-from supex_driver.agent.loop import AgentLoop, TurnResult
+from supex_driver.agent.loop import AgentLoop, ToolResultHandler, TurnResult
 from supex_driver.agent.prompts import build_system_prompt
 from supex_driver.agent.providers import build_provider
 from supex_driver.agent.providers.base import (
@@ -30,6 +32,51 @@ from supex_driver.agent.providers.base import (
     ToolSchema,
 )
 from supex_driver.agent.sketchup_mcp import SketchUpMCP
+
+# Tools whose result text references viewport screenshots on disk. When vision
+# is enabled the model's own screenshot is read back and attached to the next
+# turn so it can visually verify what it just did.
+_SCREENSHOT_TOOL_NAMES = frozenset(
+    {"take_screenshot", "take_batch_screenshots", "vcad_viewer_screenshot"}
+)
+_MAX_VISUAL_IMAGES = 8
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_IMAGE_MEDIA_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+_PATH_RE = re.compile(r"[\w./\\-]+\.(?:png|jpe?g|webp)", re.IGNORECASE)
+
+
+def _image_path_tokens(text: str) -> list[str]:
+    """Return candidate image file paths mentioned in a tool result.
+
+    Tolerates bare paths, JSON objects carrying ``path``/``screenshot``/
+    ``file`` keys, and arrays of paths. JSON string values are preferred;
+    otherwise any ``*.png|jpg|jpeg|webp`` token in the text is a candidate.
+    """
+    candidates: list[str] = []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError, TypeError:
+        payload = None
+    if isinstance(payload, (dict, list)):
+        stack: list[Any] = [payload]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                for _key, value in node.items():
+                    if isinstance(value, str) and _PATH_RE.fullmatch(value):
+                        candidates.append(value)
+                    elif isinstance(value, (dict, list)):
+                        stack.append(value)
+            elif isinstance(node, list):
+                stack.extend(node)
+    if not candidates:
+        candidates = list(_PATH_RE.findall(text))
+    return candidates
 
 
 class Agent:
@@ -45,6 +92,7 @@ class Agent:
         command: Sequence[str] | None = None,
         read_timeout_seconds: float | None = None,
         on_event: Callable[[ProviderEvent], None] | None = None,
+        on_tool_result: ToolResultHandler | None = None,
     ) -> None:
         self._config = config
         self._files = FileTools(workspace=workspace, allow_delete=allow_delete)
@@ -55,6 +103,7 @@ class Agent:
         )
         self._provider = provider or build_provider(config)
         self._on_event = on_event
+        self._on_tool_result = on_tool_result
         self._loop: AgentLoop | None = None
         self._tools: list[ToolSchema] | None = None
         self._sketchup_names: set[str] = set()
@@ -90,6 +139,8 @@ class Agent:
                 execute=self._execute_tool,
                 max_iterations=self._config.max_iterations,
                 on_event=self._on_event,
+                collect_visual=self._visual_images,
+                on_tool_result=self._on_tool_result,
             )
         return self._loop
 
@@ -97,6 +148,47 @@ class Agent:
         """Expose the combined tool schema set (connects the backend)."""
         loop = await self._ensure_loop()
         return list(loop.tools)
+
+    def _visual_images(
+        self, name: str, arguments: dict[str, Any], result: str
+    ) -> list[ImagePart]:
+        """Load screenshots the model requested back as image content.
+
+        Vision mode only: when the tool is a screenshot tool its result text
+        names an image file on disk; that file is read (containment-checked
+        against the workspace) and returned as base64 :class:`ImagePart`
+        objects so the provider can show the model what it just produced.
+        Returns an empty list when vision is off, the tool produced no image,
+        or nothing on disk could be resolved, so non-vision sessions keep
+        seeing only the on-disk path text.
+        """
+        if not self._config.vision or name not in _SCREENSHOT_TOOL_NAMES:
+            return []
+        parts: list[ImagePart] = []
+        seen: set[str] = set()
+        for raw in _image_path_tokens(result):
+            if len(parts) >= _MAX_VISUAL_IMAGES:
+                break
+            try:
+                path = self._files.resolve(raw)
+            except PathNotAllowedError:
+                continue
+            key = str(path)
+            if key in seen or not path.is_file():
+                continue
+            seen.add(key)
+            try:
+                size = path.stat().st_size
+                if size <= 0 or size > _MAX_IMAGE_BYTES:
+                    continue
+                data = base64.b64encode(path.read_bytes()).decode("ascii")
+            except OSError:
+                continue
+            media = _IMAGE_MEDIA_BY_SUFFIX.get(path.suffix.lower())
+            if media is None:
+                continue
+            parts.append(ImagePart(media_type=media, data=data))
+        return parts
 
     async def _execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Route one tool call to the file tools or the SketchUp backend."""

@@ -141,10 +141,19 @@ def _encode_messages(
                 raise ProviderProtocolError(
                     "tool result message is missing tool_call_id"
                 )
+            result_content: str | list[dict[str, Any]] = message.content
+            if message.images:
+                result_blocks: list[dict[str, Any]] = []
+                if message.content:
+                    result_blocks.append(_content_block_text(message.content))
+                result_blocks.extend(
+                    _content_block_image(image) for image in message.images
+                )
+                result_content = result_blocks
             pending_results.append(
                 {
                     "tool_use_id": message.tool_call_id,
-                    "content": message.content,
+                    "content": result_content,
                 }
             )
     flush_results()

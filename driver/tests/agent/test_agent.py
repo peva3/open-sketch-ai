@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -187,3 +188,136 @@ async def test_aclose_closes_backend_and_provider(backend, tmp_path) -> None:
     await agent.aclose()
     assert backend.closed is True
     assert provider.closed is True
+
+
+def _png_bytes() -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+
+class _ScreenshotBackend(FakeBackend):
+    """Backend that reports a screenshot written to the workspace."""
+
+    def __init__(self, shot_path) -> None:
+        super().__init__([ToolSchema(name="take_screenshot", description="shot")])
+        self._shot_path = str(shot_path)
+
+    async def call_tool(self, name: str, arguments: dict) -> str:
+        self.calls.append((name, arguments))
+        if name == "explode":
+            from supex_driver.agent.errors import BackendToolError
+
+            raise BackendToolError(name, "remote boom")
+        return json.dumps({"ok": True, "path": self._shot_path})
+
+
+@pytest.fixture
+def screenshot_backend(monkeypatch, tmp_path):
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(_png_bytes())
+    fake = _ScreenshotBackend(shot)
+    monkeypatch.setattr(agent_mod, "SketchUpMCP", lambda **kw: fake)
+    return fake
+
+
+async def test_vision_on_attaches_screenshot_image(
+    screenshot_backend, tmp_path
+) -> None:
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                ToolCallEvent(
+                    id="c1", name="take_screenshot", arguments='{"path": "shot.png"}'
+                )
+            ),
+            _final("I see it"),
+        ]
+    )
+    agent = Agent(
+        config=_config(vision=True),
+        provider=provider,
+        workspace=tmp_path,
+    )
+
+    await agent.run_turn("show me")
+
+    assert agent.history[2].role == "tool"
+    # openai dialect: images surfaced on a synthetic trailing user message
+    visual = agent.history[3]
+    assert visual.role == "user"
+    assert len(visual.images) == 1
+    assert visual.images[0].media_type == "image/png"
+    assert visual.images[0].data == base64.b64encode(_png_bytes()).decode("ascii")
+
+
+async def test_vision_off_does_not_attach_images(screenshot_backend, tmp_path) -> None:
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                ToolCallEvent(
+                    id="c1", name="take_screenshot", arguments='{"path": "shot.png"}'
+                )
+            ),
+            _final("path only"),
+        ]
+    )
+    agent = Agent(
+        config=_config(vision=False),
+        provider=provider,
+        workspace=tmp_path,
+    )
+
+    await agent.run_turn("show me")
+
+    assert [m.role for m in agent.history] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert all(not m.images for m in agent.history)
+
+
+async def test_vision_on_non_screenshot_tool_ignored(backend, tmp_path) -> None:
+    backend.add_tool(ToolSchema(name="eval_ruby", description="run ruby"))
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _final("done"),
+        ]
+    )
+    agent = Agent(config=_config(vision=True), provider=provider, workspace=tmp_path)
+
+    await agent.run_turn("go")
+
+    assert [m.role for m in agent.history] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert all(not m.images for m in agent.history)
+
+
+def test_image_path_tokens_bare_text() -> None:
+    tokens = agent_mod._image_path_tokens(
+        "saved screenshot to /ws/.tmp/shot.PNG; also a.jpg here"
+    )
+    assert tokens == ["/ws/.tmp/shot.PNG", "a.jpg"]
+
+
+def test_image_path_tokens_json_payload() -> None:
+    tokens = agent_mod._image_path_tokens(
+        json.dumps({"ok": True, "path": "views/iso.png"})
+    )
+    assert tokens == ["views/iso.png"]
+
+
+def test_image_path_tokens_json_nested_list() -> None:
+    tokens = agent_mod._image_path_tokens(
+        json.dumps({"shots": [{"file": "a.png"}, {"file": "b.jpeg"}]})
+    )
+    assert set(tokens) == {"a.png", "b.jpeg"}
+
+
+def test_image_path_tokens_no_candidates() -> None:
+    assert agent_mod._image_path_tokens('{"ok": true, "count": 3}') == []

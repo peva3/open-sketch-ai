@@ -124,7 +124,11 @@ def _preamble(workspace: str, *, vision: bool) -> str:
     ]
     if vision:
         parts.append(
-            "Image content can accompany user prompts; reason about it when "
+            "You have image vision in this session. Image content can "
+            "accompany user prompts, and images you request by calling a "
+            "screenshot tool (take_screenshot, take_batch_screenshots) are "
+            "returned to you on your next turn so you can see the actual "
+            "result of the code you wrote. Reason about those images when "
             "present. A tool result that is a JSON object with binary:true "
             "means the file is not readable as text."
         )

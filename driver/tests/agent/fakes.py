@@ -23,8 +23,11 @@ class ScriptedProvider:
     def __init__(
         self,
         turns: Iterable[Iterable[ProviderEvent]] | None = None,
+        *,
+        dialect: str = "openai",
     ) -> None:
         self._turns = [list(turn) for turn in turns] if turns else []
+        self.dialect = dialect
         self.calls: list[tuple[list[Message], list[ToolSchema], str | None]] = []
         self.closed = False
 

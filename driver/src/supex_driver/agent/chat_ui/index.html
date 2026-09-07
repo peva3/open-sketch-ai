@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>supex-chat</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e9ef;
+    --text-dim: #9aa3b2;
+    --accent: #4f9cff;
+    --ok: #4cc38a;
+    --warn: #e0a94e;
+    --err: #e2655f;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  .badge {
+    font-size: 12px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: var(--panel-2);
+    white-space: nowrap;
+  }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.err { color: var(--err); border-color: var(--err); }
+  #spacer { flex: 1; }
+  button {
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08131f; font-weight: 600; }
+  main { flex: 1; overflow-y: auto; padding: 20px 16px; }
+  #empty {
+    color: var(--text-dim);
+    text-align: center;
+    margin-top: 15vh;
+  }
+  #empty code { font-family: var(--mono); color: var(--text); }
+  .msg { margin: 0 0 16px; max-width: 860px; }
+  .who { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); margin-bottom: 4px; }
+  .who.user { color: var(--accent); }
+  .bubble {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user .bubble { background: #101c2c; border-color: #1f3a57; }
+  .tool { margin: 0 0 12px; max-width: 860px; }
+  .tool-head {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--warn);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .tool .state { color: var(--text-dim); }
+  .tool-body {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-top: 4px;
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .tool-body.hidden { display: none; }
+  .thumb {
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 6px 6px 0 0;
+    max-width: 240px;
+    max-height: 180px;
+    cursor: zoom-in;
+  }
+  .thumb.full { position: fixed; inset: 10%; width: 80%; height: 80%; max-width: none; max-height: none; object-fit: contain; z-index: 5; background: #000; }
+  #errline { display: none; color: var(--err); background: #2a1515; border: 1px solid var(--err); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
+  footer {
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 12px 16px 14px;
+  }
+  #inputrow { display: flex; gap: 10px; max-width: 900px; margin: 0 auto; align-items: flex-end; }
+  #prompt {
+    flex: 1;
+    resize: none;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 12px;
+    min-height: 42px;
+    max-height: 160px;
+    outline: none;
+  }
+  #prompt:focus { border-color: var(--accent); }
+  .hint { text-align: center; color: var(--text-dim); font-size: 11.5px; margin-top: 6px; }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+  .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>supex-chat</h1>
+  <span id="b-model" class="badge">model: ...</span>
+  <span id="b-dialect" class="badge">dialect: ...</span>
+  <span id="b-vision" class="badge">vision: off</span>
+  <span id="b-ws" class="badge">workspace: ...</span>
+  <span id="spacer"></span>
+  <button id="reset" type="button">Clear conversation</button>
+</header>
+<main id="scroll">
+  <div id="empty">Type a prompt below and watch the model edit SketchUp live.<br>
+    The model writes <code>.rb</code> files, runs them, then screenshots its own
+    work to verify before replying.</div>
+  <div id="errline"></div>
+</main>
+<footer>
+  <div id="inputrow">
+    <textarea id="prompt" rows="1" placeholder="e.g. Create a 2m x 1m x 1m box named 'plinth' on the origin and screenshot it"></textarea>
+    <button id="send" class="primary" type="button">Send</button>
+  </div>
+  <div class="hint"><kbd>Enter</kbd> send &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> new line &middot; <kbd>Esc</kbd> stop</div>
+</footer>
+<script>
+"use strict";
+const main = document.getElementById("scroll");
+const empty = document.getElementById("empty");
+const promptEl = document.getElementById("prompt");
+const sendEl = document.getElementById("send");
+const resetEl = document.getElementById("reset");
+const errline = document.getElementById("errline");
+
+let running = false;
+let streamAbort = null;
+let assistantBubble = null;   // currently open streaming .bubble
+let lastWasTool = false;      // tool results rendered; next delta starts a fresh bubble
+
+function setBadge(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = "badge" + (cls ? " " + cls : "");
+}
+
+async function loadHealth() {
+  try {
+    const r = await fetch("/api/health", { cache: "no-store" });
+    const h = await r.json();
+    setBadge("b-model", "model: " + (h.model || "?"));
+    setBadge("b-dialect", "dialect: " + (h.dialect || "?"));
+    setBadge("b-vision", "vision: " + (h.vision ? "on" : "off"), h.vision ? "ok" : "");
+    const ws = (h.workspace || "").split(/[\\/]/).pop() || h.workspace || "?";
+    setBadge("b-ws", "workspace: " + ws);
+  } catch (e) {
+    setBadge("b-model", "server unreachable", "err");
+  }
+}
+
+function showError(msg) {
+  errline.style.display = "block";
+  errline.textContent = msg;
+}
+
+function clearError() { errline.style.display = "none"; errline.textContent = ""; }
+
+function scrollToEnd() { main.scrollTop = main.scrollHeight; }
+
+function node(kind, who) {
+  const wrap = document.createElement("div");
+  wrap.className = kind;
+  const label = document.createElement("div");
+  label.className = "who" + (who === "user" ? " user" : "");
+  label.textContent = who === "user" ? "You" : (kind === "tool" ? "SketchUp tool" : "Model");
+  wrap.appendChild(label);
+  main.appendChild(wrap);
+  if (empty.style.display !== "none") empty.style.display = "none";
+  return wrap;
+}
+
+function textNode(text) {
+  const el = document.createElement("div");
+  el.className = "bubble";
+  el.textContent = text;
+  return el;
+}
+
+function appendText(fragment) {
+  if (!assistantBubble || lastWasTool) {
+    lastWasTool = false;
+    const wrap = node("msg", "model");
+    assistantBubble = document.createElement("div");
+    assistantBubble.className = "bubble";
+    assistantBubble.appendChild(textNode(fragment));
+    wrap.appendChild(assistantBubble);
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    assistantBubble.appendChild(caret);
+  } else {
+    const caret = assistantBubble.querySelector(".caret");
+    if (caret) caret.remove();
+    const last = assistantBubble.lastElementChild;
+    const cur = last && last.classList.contains("bubble") ? last : assistantBubble;
+    const tail = document.createElement("span");
+    tail.textContent = fragment;
+    cur.appendChild(tail);
+    const c2 = document.createElement("span");
+    c2.className = "caret";
+    assistantBubble.appendChild(c2);
+  }
+  scrollToEnd();
+}
+
+function finishAssistant() {
+  if (assistantBubble) {
+    const caret = assistantBubble.querySelector(".caret");
+    if (caret) caret.remove();
+    assistantBubble = null;
+  }
+}
+
+function addUserMsg(text) {
+  const wrap = node("msg", "user");
+  wrap.appendChild(textNode(text));
+  scrollToEnd();
+}
+
+function addToolCall(id, name, args) {
+  finishAssistant();
+  lastWasTool = true;
+  const wrap = node("tool", "tool");
+  const head = document.createElement("div");
+  head.className = "tool-head";
+  head.innerHTML = "";
+  const n = document.createElement("span");
+  n.textContent = name;
+  head.appendChild(n);
+  const state = document.createElement("span");
+  state.className = "state";
+  state.textContent = "running...";
+  head.appendChild(state);
+  const body = document.createElement("div");
+  body.className = "tool-body hidden";
+  body.textContent = args || "{}";
+  wrap.appendChild(head);
+  wrap.appendChild(body);
+  wrap.dataset.id = id;
+  wrap.dataset.name = name;
+  scrollToEnd();
+}
+
+function toggleBody(el) {
+  const body = el.querySelector(".tool-body");
+  if (body) body.classList.toggle("hidden");
+}
+
+function addToolResult(id, name, resultText, images) {
+  // match the open tool card for this id when present
+  const wrap = main.querySelector('.tool[data-id="' + id + '"]');
+  const target = wrap || node("tool", "tool");
+  if (!wrap) {
+    const head = document.createElement("div");
+    head.className = "tool-head";
+    const n = document.createElement("span");
+    n.textContent = name;
+    head.appendChild(n);
+    target.appendChild(head);
+    target.dataset.id = id;
+    target.dataset.name = name;
+  }
+  const head = target.querySelector(".tool-head");
+  const state = head.querySelector(".state");
+  if (state) state.remove();
+  const body = target.querySelector(".tool-body") ||
+    Object.assign(document.createElement("div"), { className: "tool-body" });
+  if (!body.parentNode) target.appendChild(body);
+  body.textContent = String(resultText || "");
+  body.classList.remove("hidden");
+  if (images && images.length) {
+    images.forEach(function (img) {
+      const el = document.createElement("img");
+      el.className = "thumb";
+      el.alt = "screenshot the model captured";
+      el.src = "data:" + img.media_type + ";base64," + img.data;
+      body.appendChild(document.createElement("br"));
+      body.appendChild(el);
+    });
+  }
+  target.addEventListener("click", function (ev) {
+    if (ev.target.classList && ev.target.classList.contains("thumb")) {
+      ev.target.classList.toggle("full");
+    } else {
+      toggleBody(target);
+    }
+  });
+  scrollToEnd();
+}
+
+function handleEvent(obj) {
+  switch (obj.type) {
+    case "delta": appendText(obj.text); break;
+    case "tool_call": addToolCall(obj.id, obj.name, obj.arguments); break;
+    case "model_end": finishAssistant(); break;
+    case "tool_result": addToolResult(obj.id, obj.name, obj.result, obj.images); break;
+    case "done": finishAssistant(); lastWasTool = false; break;
+    case "error": finishAssistant(); showError(obj.error || "unknown error"); break;
+    default: /* ignore unknown event kinds for forward-compat */ break;
+  }
+}
+
+function sendPrompt(text) {
+  clearError();
+  addUserMsg(text);
+  promptEl.value = "";
+  promptEl.style.height = "";
+  sendEl.disabled = true;
+  running = true;
+  const controller = new AbortController();
+  streamAbort = controller;
+  fetch("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: text }),
+    signal: controller.signal,
+  })
+    .then(function (res) {
+      if (!res.ok) { return res.json().then(function (j) { throw new Error(j.error || ("HTTP " + res.status)); }); }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      function pump() {
+        return reader.read().then(function (step) {
+          if (step.done) return;
+          buf += decoder.decode(step.value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line) continue;
+            try { handleEvent(JSON.parse(line)); }
+            catch (e) { /* ignore malformed trailing chunk */ }
+          }
+          return pump();
+        });
+      }
+      return pump();
+    })
+    .catch(function (err) {
+      if (err && err.name === "AbortError") return;
+      finishAssistant();
+      showError(String(err && err.message ? err.message : err));
+    })
+    .finally(function () {
+      running = false;
+      streamAbort = null;
+      sendEl.disabled = false;
+      promptEl.focus();
+    });
+}
+
+sendEl.addEventListener("click", function () {
+  const text = promptEl.value.trim();
+  if (text && !running) sendPrompt(text);
+});
+
+promptEl.addEventListener("keydown", function (ev) {
+  if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+    ev.preventDefault();
+    const text = promptEl.value.trim();
+    if (text && !running) sendPrompt(text);
+  }
+  if (ev.key === "Escape") {
+    if (running && streamAbort) { streamAbort.abort(); finishAssistant(); }
+  }
+});
+
+promptEl.addEventListener("input", function () {
+  promptEl.style.height = "";
+  promptEl.style.height = Math.min(promptEl.scrollHeight, 160) + "px";
+});
+
+resetEl.addEventListener("click", function () {
+  if (running) return;
+  fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" } })
+    .catch(function (e) { showError("reset failed: " + e); });
+  main.querySelectorAll(".msg, .tool").forEach(function (n) { n.remove(); });
+  empty.style.display = "block";
+  clearError();
+  assistantBubble = null;
+  lastWasTool = false;
+});
+
+document.addEventListener("keydown", function (ev) {
+  if (ev.ctrlKey && ev.key === "l") {
+    ev.preventDefault();
+    resetEl.click();
+  }
+});
+
+loadHealth();
+promptEl.focus();
+</script>
+</body>
+</html>

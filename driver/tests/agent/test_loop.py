@@ -6,6 +6,7 @@ import pytest
 
 from supex_driver.agent.errors import ProviderProtocolError
 from supex_driver.agent.loop import (
+    _VISUAL_NOTE,
     AgentLoop,
     TurnResult,
     parse_arguments,
@@ -266,6 +267,133 @@ async def test_openai_encode_of_loop_history() -> None:
     assert tool_msg["content"] == '{"ok": true}'
 
 
+def _tool_turn(*events: object) -> list[object]:
+    return [*events, Done("tool_use")]
+
+
+def _visual_extractor(images: list[ImagePart]):
+    def extract(name: str, arguments: dict, result: str) -> list[ImagePart]:
+        return images
+
+    return extract
+
+
+async def test_anthropic_collect_visual_rides_tool_message() -> None:
+    image = ImagePart(media_type="image/png", data="aW1n")
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _single_turn("looks good"),
+        ],
+        dialect="anthropic",
+    )
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute, collect_visual=_visual_extractor([image]))
+
+    await loop.run_turn("go")
+
+    roles = [m.role for m in loop.history]
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    tool_msg = loop.history[2]
+    assert tool_msg.images == [image]
+    assert tool_msg.content == '{"ok": true}'
+    assert _VISUAL_NOTE not in " ".join(m.content for m in loop.history)
+
+
+async def test_openai_collect_visual_uses_synthetic_user_message() -> None:
+    image = ImagePart(media_type="image/png", data="aW1n")
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _single_turn("looks good"),
+        ],
+        dialect="openai",
+    )
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute, collect_visual=_visual_extractor([image]))
+
+    await loop.run_turn("go")
+
+    roles = [m.role for m in loop.history]
+    assert roles == ["user", "assistant", "tool", "user", "assistant"]
+    tool_msg = loop.history[2]
+    assert tool_msg.images == []
+    visual_msg = loop.history[3]
+    assert visual_msg.role == "user"
+    assert visual_msg.images == [image]
+    assert visual_msg.content == _VISUAL_NOTE
+
+
+async def test_no_collect_visual_leaves_history_unchanged() -> None:
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _single_turn("done"),
+        ],
+        dialect="openai",
+    )
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute)
+
+    await loop.run_turn("go")
+
+    roles = [m.role for m in loop.history]
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    assert loop.history[2].images == []
+
+
+async def test_empty_collect_visual_returns_are_noops() -> None:
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _single_turn("done"),
+        ],
+        dialect="openai",
+    )
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute, collect_visual=_visual_extractor([]))
+
+    await loop.run_turn("go")
+
+    assert [m.role for m in loop.history] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+
+
+async def test_anthropic_encode_loop_history_with_tool_images() -> None:
+    image = ImagePart(media_type="image/png", data="aW1n")
+    provider = ScriptedProvider(
+        [
+            _tool_turn(ToolCallEvent(id="c1", name="eval_ruby", arguments="{}")),
+            _single_turn("ok"),
+        ],
+        dialect="anthropic",
+    )
+    _calls, execute = await _recorder()
+    loop = _make_loop(provider, execute, collect_visual=_visual_extractor([image]))
+    await loop.run_turn("go")
+
+    _system, encoded = _anthropic_encode(loop.history, None)
+    roles = [msg["role"] for msg in encoded]
+    assert roles == ["user", "assistant", "user", "assistant"]
+    tool_user = encoded[2]
+    assert tool_user["role"] == "user"
+    block = tool_user["content"][0]
+    assert block["type"] == "tool_result"
+    content = block["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": '{"ok": true}'}
+    assert content[1]["type"] == "image"
+    assert content[1]["source"] == {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "aW1n",
+    }
+
+
 async def test_anthropic_encode_of_loop_history_alternates() -> None:
     provider = ScriptedProvider(
         [
@@ -293,3 +421,44 @@ async def test_anthropic_encode_of_loop_history_alternates() -> None:
     assert tool_user["content"][0]["type"] == "tool_result"
     assert tool_user["content"][0]["tool_use_id"] == "c1"
     assert tool_user["content"][0]["content"] == '{"ok": true}'
+
+
+async def test_on_tool_result_reports_each_execution() -> None:
+    image = ImagePart(media_type="image/png", data="aW1n")
+    provider = ScriptedProvider(
+        [
+            _tool_turn(
+                ToolCallEvent(id="c1", name="eval_ruby", arguments='{"code":"1"}'),
+                ToolCallEvent(id="c2", name="read_file", arguments='{"path":"a.rb"}'),
+            ),
+            _single_turn("done"),
+        ],
+        dialect="anthropic",
+    )
+    _calls, execute = await _recorder()
+    observed = []
+    loop = _make_loop(
+        provider,
+        execute,
+        on_tool_result=lambda tool_id, name, arguments, result, images: observed.append(
+            (tool_id, name, arguments, result, list(images))
+        ),
+        collect_visual=_visual_extractor([image]),
+    )
+
+    await loop.run_turn("go")
+
+    assert len(observed) == 2
+    first = observed[0]
+    assert first[0] == "c1"
+    assert first[1] == "eval_ruby"
+    assert first[2] == {"code": "1"}
+    assert first[3] == '{"ok": true}'
+    assert first[4] == [image]
+    second = observed[1]
+    assert second[0] == "c2"
+    assert second[1] == "read_file"
+    assert second[2] == {"path": "a.rb"}
+    assert second[3] == '{"ok": true}'
+    assert second[4] == [image]
+
