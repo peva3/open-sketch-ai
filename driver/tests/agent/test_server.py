@@ -326,3 +326,162 @@ async def test_sequential_chats_both_succeed(backend, tmp_path) -> None:
         assert second[-1]["text"] == "two"
     finally:
         _stop_server(server)
+
+
+def _settings_server(
+    config, *, provider, workspace, backend=None, settings_path, allow_delete=False
+):
+    if backend is not None:
+        backend.add_tool(ToolSchema(name="eval_ruby", description="run ruby"))
+    server = AgentServer(
+        config=config,
+        provider=provider,
+        workspace=workspace,
+        host="127.0.0.1",
+        port=_free_port(),
+        settings_path=settings_path,
+        allow_delete=allow_delete,
+    )
+    server.start()
+    return server
+
+
+async def test_get_settings_reports_config_masks_api_key(backend, tmp_path) -> None:
+    provider = ScriptedProvider()
+    server = _settings_server(
+        _config(),
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+        settings_path=tmp_path,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.get(f"{server.url}/api/settings")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["model"] == "test-model"
+        assert body["dialect"] == "openai"
+        assert body["base_url"] == "http://localhost:1"
+        assert body["api_key"] == "***"
+        assert body["allow_delete"] is False
+        assert body["vision"] is False
+        assert body["settings_path"] == str((tmp_path / "settings.json").resolve())
+    finally:
+        _stop_server(server)
+
+
+async def test_get_settings_reflects_allow_delete_and_knobs(backend, tmp_path) -> None:
+    provider = ScriptedProvider()
+    config = _config(vision=True, max_iterations=3)
+    server = _settings_server(
+        config,
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+        settings_path=tmp_path,
+        allow_delete=True,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.get(f"{server.url}/api/settings")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["allow_delete"] is True
+        assert body["vision"] is True
+        assert body["max_iterations"] == 3
+        assert body["timeout"] == 60.0
+        assert body["retries"] == 2
+    finally:
+        _stop_server(server)
+
+
+async def test_post_settings_persists_and_hot_reloads(backend, tmp_path) -> None:
+    provider = ScriptedProvider()
+    settings_path = tmp_path
+    server = _settings_server(
+        _config(),
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+        settings_path=settings_path,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.post(
+                f"{server.url}/api/settings",
+                json={
+                    "model": "qwen3-local",
+                    "base_url": "http://localhost:8000",
+                    "dialect": "auto",
+                    "allow_delete": True,
+                    "vision": False,
+                },
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["model"] == "qwen3-local"
+        assert body["allow_delete"] is True
+        assert body["api_key"] == "***"
+
+        assert server.agent.config.model == "qwen3-local"
+        assert server.agent.config.base_url == "http://localhost:8000"
+
+        current = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert current["model"] == "qwen3-local"
+        assert current["allow_delete"] is True
+        assert current["api_key"] == "test-key"
+    finally:
+        _stop_server(server)
+
+
+async def test_post_settings_persists_and_applies_provider(backend, tmp_path) -> None:
+    config = _config()
+    provider = ScriptedProvider()
+    settings_path = tmp_path
+    server = _settings_server(
+        config,
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+        settings_path=settings_path,
+    )
+    old_provider = server.agent.provider
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.post(
+                f"{server.url}/api/settings",
+                json={"model": "gpt-5", "temperature": 0.5, "max_tokens": 512},
+            )
+        assert resp.status_code == 200
+        new_provider = server.agent.provider
+        assert new_provider is not old_provider
+        assert server.agent.config.model == "gpt-5"
+        assert server.agent.config.temperature == 0.5
+        assert server.agent.config.max_tokens == 512
+    finally:
+        _stop_server(server)
+
+
+async def test_post_settings_rejects_bad_payload(backend, tmp_path) -> None:
+    provider = ScriptedProvider()
+    server = _settings_server(
+        _config(),
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+        settings_path=tmp_path,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.post(
+                f"{server.url}/api/settings",
+                content=b"{not json",
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status_code == 400
+        assert resp.json()["ok"] is False
+    finally:
+        _stop_server(server)

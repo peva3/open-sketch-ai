@@ -62,7 +62,7 @@ def _image_path_tokens(text: str) -> list[str]:
     candidates: list[str] = []
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         payload = None
     if isinstance(payload, (dict, list)):
         stack: list[Any] = [payload]

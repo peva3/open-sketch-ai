@@ -40,7 +40,8 @@ from pathlib import Path
 from typing import Any
 
 from supex_driver.agent.agent import Agent
-from supex_driver.agent.config import ProviderConfig
+from supex_driver.agent.config import ProviderConfig, load_config
+from supex_driver.agent.errors import AgentError
 from supex_driver.agent.providers.base import (
     ChatProvider,
     Done,
@@ -48,6 +49,12 @@ from supex_driver.agent.providers.base import (
     ProviderEvent,
     TextDelta,
     ToolCallEvent,
+)
+from supex_driver.agent.settings import (
+    load_settings,
+    save_settings,
+    settings_config_kwargs,
+    settings_path,
 )
 
 logger = logging.getLogger("supex.agent.server")
@@ -105,8 +112,13 @@ class AgentServer:
         host: str | None = None,
         port: int | None = None,
         ui_dir: str | Path | None = None,
+        settings_path: str | Path | None = None,
     ) -> None:
         self._config = config
+        self._allow_delete = allow_delete
+        self._command = command
+        self._read_timeout_seconds = read_timeout_seconds
+        self._settings_path = Path(settings_path) if settings_path is not None else None
         self._host = host or os.environ.get("SUPEX_AI_HOST") or DEFAULT_HOST
         self._port = int(os.environ.get("SUPEX_AI_PORT") or port or DEFAULT_PORT)
         self._ui_dir = Path(ui_dir) if ui_dir is not None else _UI_DIR
@@ -256,6 +268,12 @@ class AgentServer:
             "dialect": cfg.effective_dialect,
             "base_url": cfg.base_url,
             "vision": cfg.vision,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "max_iterations": cfg.max_iterations,
+            "timeout": cfg.timeout,
+            "retries": cfg.retries,
+            "allow_delete": self._allow_delete,
             "workspace": str(self._agent.files.workspace),
             "busy": self._lock.locked(),
         }
@@ -272,6 +290,57 @@ class AgentServer:
     def _reset(self) -> dict[str, Any]:
         self._agent.reset_conversation()
         return {"ok": True}
+
+    def _get_settings(self) -> dict[str, Any]:
+        """Return the effective config plus the persisted settings baseline."""
+        cfg = self._config
+        stored = load_settings(self._settings_path)
+        return {
+            "base_url": cfg.base_url,
+            "api_key": "***" if cfg.api_key else "",
+            "model": cfg.model,
+            "dialect": cfg.effective_dialect,
+            "vision": cfg.vision,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "max_iterations": cfg.max_iterations,
+            "timeout": cfg.timeout,
+            "retries": cfg.retries,
+            "allow_delete": self._allow_delete,
+            "workspace": str(self._agent.files.workspace),
+            "settings_path": str(settings_path(self._settings_path)),
+            "stored": stored,
+        }
+
+    def _update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist a partial settings update and hot-reload the Agent."""
+        stored = load_settings(self._settings_path)
+        merged = {**stored, **payload}
+        # The UI never resends a masked api_key (it is shown as a sentinel and
+        # omitted unless the user types a new one), so preserve the existing key.
+        if not merged.get("api_key"):
+            merged["api_key"] = self._config.api_key
+        save_settings(merged, self._settings_path)
+
+        allow_delete = bool(payload.get("allow_delete", self._allow_delete))
+        kwargs = settings_config_kwargs(merged)
+        new_config = load_config(**kwargs, env=os.environ)
+        old = self._agent
+        self._config = new_config
+        self._allow_delete = allow_delete
+        self._agent = Agent(
+            config=new_config,
+            workspace=old.files.workspace,
+            allow_delete=allow_delete,
+            command=self._command,
+            read_timeout_seconds=self._read_timeout_seconds,
+        )
+        self._agent.reset_conversation()
+        try:
+            self._run_async(old.aclose())
+        except Exception:  # noqa: BLE001 - best effort teardown
+            logger.debug("old agent close failed", exc_info=True)
+        return {"ok": True, **self._get_settings()}
 
     def _start_chat(
         self, text: str, images: Sequence[ImagePart]
@@ -354,6 +423,9 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
             if self.path == "/api/models":
                 self._send_json(200, server._list_models())
                 return
+            if self.path == "/api/settings":
+                self._send_json(200, {"ok": True, **server._get_settings()})
+                return
             self._serve_static(self.path)
 
         def do_POST(self) -> None:
@@ -363,7 +435,23 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
             if self.path == "/api/chat":
                 self._do_chat()
                 return
+            if self.path == "/api/settings":
+                self._do_update_settings()
+                return
             self._send_json(404, {"ok": False, "error": f"no route {self.path}"})
+
+        def _do_update_settings(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            try:
+                result = server._update_settings(payload)
+            except (AgentError, TypeError, ValueError) as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200, result)
 
         def _do_chat(self) -> None:
             if not server._lock.acquire(blocking=False):

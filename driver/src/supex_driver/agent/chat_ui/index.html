@@ -141,6 +141,47 @@
   .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+  #settings {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    display: none;
+    align-items: flex-start;
+    justify-content: flex-end;
+    z-index: 10;
+  }
+  #settings.open { display: flex; }
+  .drawer {
+    width: 420px;
+    max-width: 92vw;
+    height: 100%;
+    overflow-y: auto;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 18px 20px 24px;
+  }
+  .drawer h2 { font-size: 14px; margin: 0 0 14px; font-weight: 600; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+  .field input[type=text], .field input[type=password], .field input[type=number], .field select {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    outline: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .check-row { display: flex; align-items: center; gap: 8px; }
+  .check-row input { accent-color: var(--accent); width: 15px; height: 15px; }
+  .drawer .row { display: flex; gap: 10px; margin-top: 16px; }
+  .drawer .row button { flex: 1; }
+  .drawer-status { font-size: 12px; margin-top: 12px; color: var(--text-dim); }
+  .drawer-status.ok { color: var(--ok); }
+  .drawer-status.err { color: var(--err); }
 </style>
 </head>
 <body>
@@ -151,6 +192,7 @@
   <span id="b-vision" class="badge">vision: off</span>
   <span id="b-ws" class="badge">workspace: ...</span>
   <span id="spacer"></span>
+  <button id="settings-toggle" type="button">Settings</button>
   <button id="reset" type="button">Clear conversation</button>
 </header>
 <main id="scroll">
@@ -166,6 +208,64 @@
   </div>
   <div class="hint"><kbd>Enter</kbd> send &middot; <kbd>Shift</kbd>+<kbd>Enter</kbd> new line &middot; <kbd>Esc</kbd> stop</div>
 </footer>
+<div id="settings">
+  <div class="drawer">
+    <h2>Settings</h2>
+    <div class="field">
+      <label for="s-base-url">Base URL</label>
+      <input id="s-base-url" type="text" placeholder="https://api.openai.com/v1">
+    </div>
+    <div class="field">
+      <label for="s-api-key">API Key</label>
+      <input id="s-api-key" type="password" placeholder="sk-... (leave as is to keep)">
+    </div>
+    <div class="field">
+      <label for="s-model">Model</label>
+      <input id="s-model" type="text" placeholder="gpt-5">
+    </div>
+    <div class="field">
+      <label for="s-dialect">Dialect</label>
+      <select id="s-dialect">
+        <option value="auto">auto</option>
+        <option value="openai">openai</option>
+        <option value="anthropic">anthropic</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="s-max-iterations">Max iterations</label>
+      <input id="s-max-iterations" type="number" min="1" step="1">
+    </div>
+    <div class="field">
+      <label for="s-max-tokens">Max tokens</label>
+      <input id="s-max-tokens" type="number" min="1" step="1" placeholder="unset">
+    </div>
+    <div class="field">
+      <label for="s-temperature">Temperature</label>
+      <input id="s-temperature" type="number" min="0" max="2" step="0.1" placeholder="unset">
+    </div>
+    <div class="field">
+      <label for="s-timeout">Timeout (seconds)</label>
+      <input id="s-timeout" type="number" min="1" step="1">
+    </div>
+    <div class="field">
+      <label for="s-retries">Retries</label>
+      <input id="s-retries" type="number" min="0" step="1">
+    </div>
+    <div class="field check-row">
+      <input id="s-vision" type="checkbox">
+      <label class="check-row" for="s-vision">Vision (attach screenshots to the model)</label>
+    </div>
+    <div class="field check-row">
+      <input id="s-allow-delete" type="checkbox">
+      <label class="check-row" for="s-allow-delete">Allow delete_file</label>
+    </div>
+    <div class="row">
+      <button id="settings-cancel" type="button">Cancel</button>
+      <button id="settings-save" class="primary" type="button">Save</button>
+    </div>
+    <div id="settings-status" class="drawer-status"></div>
+  </div>
+</div>
 <script>
 "use strict";
 const main = document.getElementById("scroll");
@@ -174,6 +274,11 @@ const promptEl = document.getElementById("prompt");
 const sendEl = document.getElementById("send");
 const resetEl = document.getElementById("reset");
 const errline = document.getElementById("errline");
+const settingsEl = document.getElementById("settings");
+const settingsToggleEl = document.getElementById("settings-toggle");
+const settingsSaveEl = document.getElementById("settings-save");
+const settingsCancelEl = document.getElementById("settings-cancel");
+const settingsStatusEl = document.getElementById("settings-status");
 
 let running = false;
 let streamAbort = null;
@@ -439,6 +544,89 @@ document.addEventListener("keydown", function (ev) {
     resetEl.click();
   }
 });
+
+function settingsStatus(text, cls) {
+  settingsStatusEl.textContent = text || "";
+  settingsStatusEl.className = "drawer-status" + (cls ? " " + cls : "");
+}
+
+function settingsNum(id) {
+  const el = document.getElementById(id);
+  const raw = el.value.trim();
+  return raw === "" ? undefined : Number(raw);
+}
+
+function settingsBool(id) { return document.getElementById(id).checked; }
+
+async function loadSettings() {
+  settingsToggleEl.disabled = true;
+  try {
+    const r = await fetch("/api/settings", { cache: "no-store" });
+    const s = await r.json();
+    document.getElementById("s-base-url").value = s.base_url || "";
+    document.getElementById("s-api-key").value = s.api_key || "";
+    document.getElementById("s-model").value = s.model || "";
+    document.getElementById("s-dialect").value = s.dialect || "auto";
+    if (s.max_iterations != null) document.getElementById("s-max-iterations").value = s.max_iterations;
+    if (s.max_tokens != null) document.getElementById("s-max-tokens").value = s.max_tokens;
+    if (s.temperature != null) document.getElementById("s-temperature").value = s.temperature;
+    if (s.timeout != null) document.getElementById("s-timeout").value = s.timeout;
+    if (s.retries != null) document.getElementById("s-retries").value = s.retries;
+    document.getElementById("s-vision").checked = !!s.vision;
+    document.getElementById("s-allow-delete").checked = !!s.allow_delete;
+  } catch (e) {
+    settingsStatus("could not load settings: " + String(e), "err");
+  } finally {
+    settingsToggleEl.disabled = false;
+  }
+}
+
+function openSettings() {
+  settingsEl.classList.add("open");
+  settingsStatus("");
+  loadSettings();
+}
+
+function closeSettings() { settingsEl.classList.remove("open"); }
+
+async function saveSettings() {
+  const payload = {
+    base_url: document.getElementById("s-base-url").value.trim() || undefined,
+    api_key: document.getElementById("s-api-key").value || undefined,
+    model: document.getElementById("s-model").value.trim() || undefined,
+    dialect: document.getElementById("s-dialect").value || "auto",
+    max_iterations: settingsNum("s-max-iterations"),
+    max_tokens: settingsNum("s-max-tokens"),
+    temperature: settingsNum("s-temperature"),
+    timeout: settingsNum("s-timeout"),
+    retries: settingsNum("s-retries"),
+    vision: settingsBool("s-vision"),
+    allow_delete: settingsBool("s-allow-delete"),
+  };
+  Object.keys(payload).forEach(function (k) { if (payload[k] === undefined) delete payload[k]; });
+  settingsSaveEl.disabled = true;
+  try {
+    const r = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    settingsStatus("saved", "ok");
+    closeSettings();
+    loadHealth();
+  } catch (e) {
+    settingsStatus("save failed: " + String(e && e.message ? e.message : e), "err");
+  } finally {
+    settingsSaveEl.disabled = false;
+  }
+}
+
+settingsToggleEl.addEventListener("click", openSettings);
+settingsCancelEl.addEventListener("click", closeSettings);
+settingsSaveEl.addEventListener("click", saveSettings);
+settingsEl.addEventListener("click", function (ev) { if (ev.target === settingsEl) closeSettings(); });
 
 loadHealth();
 promptEl.focus();

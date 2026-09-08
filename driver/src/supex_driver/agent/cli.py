@@ -38,6 +38,7 @@ from supex_driver.agent.providers.base import (
     Usage,
 )
 from supex_driver.agent.server import AgentServer
+from supex_driver.agent.settings import load_settings
 
 try:
     from importlib.metadata import PackageNotFoundError
@@ -485,6 +486,8 @@ def _load_config_from(
         profile = resolve_profile(
             provider_profile or os.environ.get("SUPEX_AI_PROFILE")
         )
+        if profile is None:
+            profile = load_settings()
         return load_config(profile=profile, **kwargs)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
