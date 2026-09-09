@@ -139,48 +139,47 @@ class OpenAIProvider(ChatProvider):
         stop_reason: str | None = None
         usage: dict[str, Any] | None = None
 
-        async with self._stream_text(self._chat_url, headers, payload) as response:
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data_text = line[5:].strip()
-                if data_text == "[DONE]":
-                    break
-                try:
-                    data: dict[str, Any] = json.loads(data_text)
-                except json.JSONDecodeError as exc:
-                    raise ProviderProtocolError(
-                        f"non-JSON SSE data from provider: {data_text!r}"
-                    ) from exc
-                self._handle_error_chunk(data)
-                if "usage" in data and isinstance(data["usage"], dict):
-                    usage = data["usage"]
-                choices = data.get("choices") or []
-                if not choices:
-                    continue
-                choice = choices[0]
-                delta = choice.get("delta") or {}
-                finish = choice.get("finish_reason")
-                if finish:
-                    stop_reason = finish
-                content = delta.get("content")
-                if content:
-                    text_parts.append(content)
-                    yield TextDelta(content)
-                for tool_delta in delta.get("tool_calls") or []:
-                    index = int(tool_delta.get("index", 0))
-                    buffer = tool_buffers.setdefault(
-                        index, {"id": "", "name": "", "arguments": ""}
-                    )
-                    fn = tool_delta.get("function") or {}
-                    if tool_delta.get("id"):
-                        buffer["id"] = tool_delta["id"]
-                    if fn.get("name"):
-                        buffer["name"] = fn["name"]
-                    arguments = fn.get("arguments") or ""
-                    buffer["arguments"] = _merge_argument_fragment(
-                        buffer["arguments"], arguments
-                    )
+        async for line in self._stream_sse_lines(self._chat_url, headers, payload):
+            if not line.startswith("data:"):
+                continue
+            data_text = line[5:].strip()
+            if data_text == "[DONE]":
+                break
+            try:
+                data: dict[str, Any] = json.loads(data_text)
+            except json.JSONDecodeError as exc:
+                raise ProviderProtocolError(
+                    f"non-JSON SSE data from provider: {data_text!r}"
+                ) from exc
+            self._handle_error_chunk(data)
+            if "usage" in data and isinstance(data["usage"], dict):
+                usage = data["usage"]
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            finish = choice.get("finish_reason")
+            if finish:
+                stop_reason = finish
+            content = delta.get("content")
+            if content:
+                text_parts.append(content)
+                yield TextDelta(content)
+            for tool_delta in delta.get("tool_calls") or []:
+                index = int(tool_delta.get("index", 0))
+                buffer = tool_buffers.setdefault(
+                    index, {"id": "", "name": "", "arguments": ""}
+                )
+                fn = tool_delta.get("function") or {}
+                if tool_delta.get("id"):
+                    buffer["id"] = tool_delta["id"]
+                if fn.get("name"):
+                    buffer["name"] = fn["name"]
+                arguments = fn.get("arguments") or ""
+                buffer["arguments"] = _merge_argument_fragment(
+                    buffer["arguments"], arguments
+                )
 
         for call in _finalize_tool_calls(tool_buffers):
             yield call

@@ -216,59 +216,58 @@ class AnthropicProvider(ChatProvider):
         output_tokens: int | None = None
         stop_reason: str | None = None
 
-        async with self._stream_text(self._messages_url, headers, payload) as response:
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data_text = line[5:].strip()
-                if not data_text:
-                    continue
-                try:
-                    data: dict[str, Any] = json.loads(data_text)
-                except json.JSONDecodeError as exc:
-                    raise ProviderProtocolError(
-                        f"non-JSON SSE data from provider: {data_text!r}"
-                    ) from exc
-                event_type = data.get("type")
-                if event_type == "message_start":
-                    usage = data.get("message", {}).get("usage") or {}
-                    input_tokens = usage.get("input_tokens")
-                elif event_type == "content_block_start":
-                    block = data.get("content_block") or {}
-                    if block.get("type") == "tool_use":
-                        index = int(data.get("index", 0))
-                        # Seed only when arguments arrived whole; when the server
-                        # streams input_json_delta it sends an empty `input`, and
-                        # seeding "{}" would corrupt the accumulated fragment JSON.
-                        raw_input = block.get("input")
-                        seed = json.dumps(raw_input) if raw_input else ""
-                        tool_buffers[index] = {
-                            "id": block.get("id") or "",
-                            "name": block.get("name") or "",
-                            "input": seed,
-                        }
-                elif event_type == "content_block_delta":
-                    delta = data.get("delta") or {}
-                    delta_type = delta.get("type")
-                    if delta_type == "text_delta":
-                        text = delta.get("text") or ""
-                        if text:
-                            yield TextDelta(text)
-                    elif delta_type == "input_json_delta":
-                        partial = delta.get("partial_json") or ""
-                        index = int(data.get("index", 0))
-                        buffer = tool_buffers.setdefault(
-                            index, {"id": "", "name": "", "input": ""}
-                        )
-                        current = buffer["input"]
-                        if current and partial.startswith(current):
-                            buffer["input"] = partial
-                        else:
-                            buffer["input"] = current + partial
-                elif event_type == "message_delta":
-                    stop_reason = (data.get("delta") or {}).get("stop_reason")
-                    usage = data.get("usage") or {}
-                    output_tokens = usage.get("output_tokens")
+        async for line in self._stream_sse_lines(self._messages_url, headers, payload):
+            if not line.startswith("data:"):
+                continue
+            data_text = line[5:].strip()
+            if not data_text:
+                continue
+            try:
+                data: dict[str, Any] = json.loads(data_text)
+            except json.JSONDecodeError as exc:
+                raise ProviderProtocolError(
+                    f"non-JSON SSE data from provider: {data_text!r}"
+                ) from exc
+            event_type = data.get("type")
+            if event_type == "message_start":
+                usage = data.get("message", {}).get("usage") or {}
+                input_tokens = usage.get("input_tokens")
+            elif event_type == "content_block_start":
+                block = data.get("content_block") or {}
+                if block.get("type") == "tool_use":
+                    index = int(data.get("index", 0))
+                    # Seed only when arguments arrived whole; when the server
+                    # streams input_json_delta it sends an empty `input`, and
+                    # seeding "{}" would corrupt the accumulated fragment JSON.
+                    raw_input = block.get("input")
+                    seed = json.dumps(raw_input) if raw_input else ""
+                    tool_buffers[index] = {
+                        "id": block.get("id") or "",
+                        "name": block.get("name") or "",
+                        "input": seed,
+                    }
+            elif event_type == "content_block_delta":
+                delta = data.get("delta") or {}
+                delta_type = delta.get("type")
+                if delta_type == "text_delta":
+                    text = delta.get("text") or ""
+                    if text:
+                        yield TextDelta(text)
+                elif delta_type == "input_json_delta":
+                    partial = delta.get("partial_json") or ""
+                    index = int(data.get("index", 0))
+                    buffer = tool_buffers.setdefault(
+                        index, {"id": "", "name": "", "input": ""}
+                    )
+                    current = buffer["input"]
+                    if current and partial.startswith(current):
+                        buffer["input"] = partial
+                    else:
+                        buffer["input"] = current + partial
+            elif event_type == "message_delta":
+                stop_reason = (data.get("delta") or {}).get("stop_reason")
+                usage = data.get("usage") or {}
+                output_tokens = usage.get("output_tokens")
 
         calls: list[ToolCallEvent] = []
         for index in sorted(tool_buffers):

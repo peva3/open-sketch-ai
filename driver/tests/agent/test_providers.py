@@ -947,3 +947,79 @@ class TestRetries:
         finally:
             await provider.aclose()
         assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_headers_then_close_before_content_is_retried(self):
+        """DeepSeek-style: 200 + SSE headers, then the socket closes before
+        any body bytes. The request must be retried transparently."""
+        from contextlib import asynccontextmanager
+
+        attempts = 0
+
+        async def aiter_lines_once() -> None:
+            return None
+
+        class _Stream:
+            def __init__(self, *, fail_first: bool) -> None:
+                self.fail_first = fail_first
+
+            async def aiter_lines(self):
+                if self.fail_first:
+                    self.fail_first = False
+                    raise httpx2.ReadError("closed before body")
+                yield _data({"choices": [{"delta": {"content": "hello"}}]})
+                yield _data({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+                yield "data: [DONE]"
+
+        @asynccontextmanager
+        async def fake_stream_text(url, headers, payload):
+            nonlocal attempts
+            attempts += 1
+            yield _Stream(fail_first=attempts == 1)
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(
+            provider, lambda request: _json_response(_sse("data: [DONE]"))
+        )
+        await _disable_backoff(provider)
+        provider._stream_text = fake_stream_text  # type: ignore[method-assign] # noqa: SLF001
+        try:
+            events = await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert attempts == 2
+        assert isinstance(events[0], TextDelta)
+        assert events[0].text == "hello"
+        assert isinstance(events[-1], Done)
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_drop_after_content_raises_typed_error(self):
+        """A drop after content has started must NOT be retried (replay would
+        duplicate output); it surfaces as a typed ProviderConnectionError."""
+        from contextlib import asynccontextmanager
+
+        attempts = 0
+
+        class _DropStream:
+            async def aiter_lines(self):
+                yield _data({"choices": [{"delta": {"content": "partial"}}]})
+                raise httpx2.ReadError("socket closed mid-stream")
+
+        @asynccontextmanager
+        async def fake_stream_text(url, headers, payload):
+            nonlocal attempts
+            attempts += 1
+            yield _DropStream()
+
+        provider = build_provider(_openai_config(retries=2))
+        _install_transport(
+            provider, lambda request: _json_response(_sse("data: [DONE]"))
+        )
+        await _disable_backoff(provider)
+        provider._stream_text = fake_stream_text  # type: ignore[method-assign] # noqa: SLF001
+        try:
+            with pytest.raises(ProviderConnectionError, match="mid-stream"):
+                await _collect(provider, [Message(role="user", content="hi")])
+        finally:
+            await provider.aclose()
+        assert attempts == 1

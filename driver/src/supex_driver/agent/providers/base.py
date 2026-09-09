@@ -385,3 +385,41 @@ class ChatProvider(ABC):
         if not isinstance(parsed, dict):
             raise ProviderProtocolError(f"unexpected response shape from {url}")
         return parsed
+
+    async def _stream_sse_lines(
+        self, url: str, headers: dict[str, str], payload: dict[str, Any]
+    ) -> AsyncIterator[str]:
+        """Yield SSE text lines from a POST stream.
+
+        Some OpenAI-compatible servers (e.g. DeepSeek) reply ``200`` plus
+        stream headers and then close the socket before sending any body
+        bytes. If the transport drops before a single line was delivered,
+        retry the whole request (backoff) up to ``config.retries`` times.
+        A drop *after* content started streaming is surfaced as a typed
+        error instead of retrying, since a replay could duplicate output.
+        """
+        attempt = 0
+        while True:
+            saw_line = False
+            try:
+                async with self._stream_text(url, headers, payload) as response:
+                    async for line in response.aiter_lines():
+                        saw_line = True
+                        yield line
+                return
+            except (
+                httpx2.ReadError,
+                httpx2.RemoteProtocolError,
+                httpx2.ConnectError,
+                httpx2.TimeoutException,
+            ) as exc:
+                if saw_line or attempt >= self.config.retries:
+                    if isinstance(exc, httpx2.TimeoutException):
+                        raise ProviderTimeoutError(
+                            f"timed out mid-stream from {url}: {exc}"
+                        ) from exc
+                    raise ProviderConnectionError(
+                        f"connection lost mid-stream from {url}: {exc}"
+                    ) from exc
+                attempt += 1
+                await self._backoff(attempt)
