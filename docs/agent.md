@@ -270,32 +270,47 @@ of the binary distribution.
 
 ### Windows desktop (no terminal, no cloud)
 
-The Windows packaging folder ships two double-click scripts (build locally,
-nothing is uploaded anywhere):
+**One click from the repo root:** `start-windows.cmd` brings everything up on
+Windows. Double-clicking it, in order:
 
-1. `driver/packaging/windows/build-exe.cmd` — double-click **once** on the
-   machine that will run the agent. It installs `uv` if missing, installs the
-   build extra, runs PyInstaller, and drops the launcher next to the binaries.
-   Output goes to `driver/dist/` as `supex-chat.exe`, `supex-mcp.exe`,
-   `supex.exe`, and `run-supex-chat.cmd`.
-2. `driver/dist/run-supex-chat.cmd` — double-click to launch the windowed
-   agent: it starts the local server and opens the chat window in your default
-   browser at `http://127.0.0.1:8765`. For a desktop icon, right-click
-   `run-supex-chat.cmd` and choose *Send to > Desktop (create shortcut)*.
+1. builds the three executables if they are missing (first run only, a few
+   minutes — it calls `driver/packaging/windows/build-exe.cmd`),
+2. launches SketchUp with the Supex runtime injected
+   (`scripts/launch-sketchup-windows.cmd`, its own window), and
+3. starts `supex-chat.exe serve` in the current window, which opens the chat
+   UI at `http://127.0.0.1:8765` in your default browser.
 
 The three executables must stay together in one folder: a frozen `supex-chat`
-spawns the frozen `supex-mcp` sibling as its SketchUp backend. Provider
-configuration comes from the same env vars or profiles file as any other
-invocation (see [Configuration](#configuration) above); you can set them in
-`run-supex-chat.cmd` or, better, in a named profile so the app finds them
-without a terminal.
+spawns the frozen `supex-mcp` sibling as its SketchUp backend. The runtime
+comes from this repo's `runtime/src/` (dev-style injection), so the repo must
+stay on the machine.
+
+For finer control, the individual pieces are also double-clickable:
+
+1. `driver/packaging/windows/build-exe.cmd` — builds locally (installs `uv` if
+   missing, syncs the build extra, runs PyInstaller). Output goes to
+   `driver/dist/` as `supex-chat.exe`, `supex-mcp.exe`, `supex.exe`, and
+   `run-supex-chat.cmd`.
+2. `scripts/launch-sketchup-windows.cmd` — boots SketchUp with the runtime
+   injected (see below).
+3. `driver/dist/run-supex-chat.cmd` — launches the windowed agent: it starts
+   the local server and opens the chat window in your default browser at
+   `http://127.0.0.1:8765`. For a desktop icon, right-click
+   `run-supex-chat.cmd` and choose *Send to > Desktop (create shortcut)*.
+
+Provider configuration comes from the same env vars or profiles file as any
+other invocation (see [Configuration](#configuration) above); you can set them
+in `run-supex-chat.cmd` or, better, in a named profile so the app finds them
+without a terminal. The window opens even with no provider configured — a
+banner points you to the in-browser Settings drawer.
 
 #### First, the SketchUp runtime must be running
 
 The binaries are self-contained on the Python side, but the agent only works
 when the **Supex Ruby runtime** is loaded inside SketchUp (it listens on
 `127.0.0.1:9876`). SketchUp 2026 ships an embedded Ruby, so nothing extra is
-installed — the runtime sources are injected at launch:
+installed — the runtime sources are injected at launch. `start-windows.cmd`
+does this step for you; to run it on its own:
 
 - `scripts/launch-sketchup-windows.cmd` — double-click after SketchUp is
   installed. It finds `SketchUp.exe` (or use the `SUPEX_SKETCHUP_EXE`
@@ -308,7 +323,10 @@ installed — the runtime sources are injected at launch:
 
 Only **after** the bridge is up (watch the SketchUp console, or run
 `supex-chat --check`) do you start `run-supex-chat.cmd`. Both processes are
-local; they share `SUPEX_AUTH_TOKEN` if you use one.
+local; they share `SUPEX_AUTH_TOKEN` if you use one. `start-windows.cmd` runs
+the SketchUp launcher and the chat server together; the launcher window
+reports when the bridge is up, and the chat server reconnects on its own, so
+manual ordering is only needed when running the pieces individually.
 
 > Packaged alternative: `cd runtime && bundle exec rake build` produces
 > `Supex-Runtime.rbz` (bundles the stdlib). Install that via
