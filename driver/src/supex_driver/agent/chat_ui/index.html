@@ -578,7 +578,12 @@ async function loadSettings() {
     const r = await fetch("/api/settings", { cache: "no-store" });
     const s = await r.json();
     document.getElementById("s-base-url").value = s.base_url || "";
-    document.getElementById("s-api-key").value = s.api_key || "";
+    const keyField = document.getElementById("s-api-key");
+    if (s.api_key && s.api_key !== "***") {
+      keyField.value = s.api_key;
+    } else {
+      keyField.value = "";
+    }
     document.getElementById("s-model").value = s.model || "";
     document.getElementById("s-dialect").value = s.dialect || "auto";
     if (s.max_iterations != null) document.getElementById("s-max-iterations").value = s.max_iterations;
