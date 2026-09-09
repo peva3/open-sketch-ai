@@ -181,9 +181,11 @@
   .check-row input { accent-color: var(--accent); width: 15px; height: 15px; }
   .drawer .row { display: flex; gap: 10px; margin-top: 16px; }
   .drawer .row button { flex: 1; }
-  .drawer-status { font-size: 12px; margin-top: 12px; color: var(--text-dim); }
+  .drawer-status { font-size: 12px; margin-top: 12px; color: var(--text-dim); white-space: pre-line; }
   .drawer-status.ok { color: var(--ok); }
   .drawer-status.err { color: var(--err); }
+  .drawer-status code { font-family: var(--mono, monospace); }
+  #settings-test-result:empty { display: none; }
 </style>
 </head>
 <body>
@@ -266,6 +268,10 @@
       <button id="settings-cancel" type="button">Cancel</button>
       <button id="settings-save" class="primary" type="button">Save</button>
     </div>
+    <div class="row">
+      <button id="settings-test" type="button">Test connection</button>
+    </div>
+    <div id="settings-test-result" class="drawer-status"></div>
     <div id="settings-status" class="drawer-status"></div>
   </div>
 </div>
@@ -284,6 +290,8 @@ const settingsToggleEl = document.getElementById("settings-toggle");
 const settingsSaveEl = document.getElementById("settings-save");
 const settingsCancelEl = document.getElementById("settings-cancel");
 const settingsStatusEl = document.getElementById("settings-status");
+const settingsTestEl = document.getElementById("settings-test");
+const settingsTestResultEl = document.getElementById("settings-test-result");
 
 let running = false;
 let streamAbort = null;
@@ -595,7 +603,7 @@ function openSettings() {
 
 function closeSettings() { settingsEl.classList.remove("open"); }
 
-async function saveSettings() {
+function settingsPayload() {
   const payload = {
     base_url: document.getElementById("s-base-url").value.trim() || undefined,
     api_key: document.getElementById("s-api-key").value || undefined,
@@ -610,6 +618,11 @@ async function saveSettings() {
     allow_delete: settingsBool("s-allow-delete"),
   };
   Object.keys(payload).forEach(function (k) { if (payload[k] === undefined) delete payload[k]; });
+  return payload;
+}
+
+async function saveSettings() {
+  const payload = settingsPayload();
   settingsSaveEl.disabled = true;
   try {
     const r = await fetch("/api/settings", {
@@ -629,10 +642,52 @@ async function saveSettings() {
   }
 }
 
+async function testConnection() {
+  settingsTestEl.disabled = true;
+  settingsStatus("");
+  settingsTestResultEl.textContent = "Saving settings, then probing the model endpoint in four stages...";
+  settingsTestResultEl.className = "drawer-status";
+  try {
+    const sp = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(settingsPayload()),
+    });
+    const sj = await sp.json();
+    if (!sp.ok) throw new Error(sj.error || ("HTTP " + sp.status));
+    const r = await fetch("/api/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    const lines = [];
+    lines.push("endpoint " + (j.base_url || "") + "  model " + (j.model || "") +
+      "  dialect " + (j.dialect || ""));
+    (j.notes || []).forEach(function (n) { lines.push("note: " + n); });
+    (j.stages || []).forEach(function (s) {
+      const tag = s.ok ? "OK  " : "FAIL";
+      lines.push(tag + "  " + s.name + "  " + (s.elapsed != null ? s.elapsed + "s" : "") +
+        (s.detail ? "  -> " + s.detail : ""));
+      if (s.error) lines.push("       error: " + s.error);
+    });
+    settingsTestResultEl.textContent = lines.join("\n");
+    settingsTestResultEl.className = "drawer-status " + (j.ok ? "ok" : "err");
+  } catch (e) {
+    settingsTestResultEl.textContent = "test failed: " +
+      String(e && e.message ? e.message : e);
+    settingsTestResultEl.className = "drawer-status err";
+  } finally {
+    settingsTestEl.disabled = false;
+  }
+}
+
 settingsToggleEl.addEventListener("click", openSettings);
 nudgeLinkEl.addEventListener("click", openSettings);
 settingsCancelEl.addEventListener("click", closeSettings);
 settingsSaveEl.addEventListener("click", saveSettings);
+settingsTestEl.addEventListener("click", testConnection);
 settingsEl.addEventListener("click", function (ev) { if (ev.target === settingsEl) closeSettings(); });
 
 loadHealth();

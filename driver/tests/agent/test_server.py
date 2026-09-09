@@ -508,3 +508,48 @@ async def test_post_settings_rejects_bad_payload(backend, tmp_path) -> None:
         assert resp.json()["ok"] is False
     finally:
         _stop_server(server)
+
+
+async def test_api_test_probes_four_stages(backend, tmp_path) -> None:
+    turns = [[TextDelta("pong"), Done("end_turn")]] * 4
+    provider = ScriptedProvider(turns=turns, dialect="openai")
+    server = _start_server(
+        _config(),
+        provider=provider,
+        workspace=tmp_path,
+        backend=backend,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.post(f"{server.url}/api/test", json={})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["model"] == "test-model"
+        assert body["dialect"] == "openai"
+        names = [stage["name"] for stage in body["stages"]]
+        assert names == ["minimal", "tools", "system", "full"]
+        for stage in body["stages"]:
+            assert stage["ok"] is True
+            assert stage["error"] is None
+            assert "pong" in stage["detail"]
+    finally:
+        _stop_server(server)
+
+
+async def test_api_test_without_model_returns_friendly_error(backend, tmp_path) -> None:
+    provider = ScriptedProvider()
+    server = _start_server(
+        _config(model=None),
+        provider=provider,
+        workspace=tmp_path,
+    )
+    try:
+        async with httpx2.AsyncClient() as client:
+            resp = await client.post(f"{server.url}/api/test", json={})
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["ok"] is False
+        assert "No AI model configured yet" in body["error"]
+    finally:
+        _stop_server(server)

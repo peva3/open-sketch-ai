@@ -21,7 +21,8 @@ Wire protocol (newline-delimited JSON, ``application/x-ndjson``)::
 ``done`` and ``error`` are always the final line of a stream. Endpoints:
 ``GET /`` (chat UI), ``GET /api/health``, ``GET /api/models``,
 ``POST /api/chat`` (one streamed user turn; body ``{"text": ..., "images"?: [...]}``),
-``POST /api/reset``. Bind host/port come from ``SUPEX_AI_HOST``/
+``POST /api/reset``, ``POST /api/test`` (staged provider connectivity probe).
+Bind host/port come from ``SUPEX_AI_HOST``/
 ``SUPEX_AI_PORT`` (defaults ``127.0.0.1``/``8765``) or explicit arguments.
 """
 
@@ -33,6 +34,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from collections.abc import Sequence
 from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,9 +48,11 @@ from supex_driver.agent.providers.base import (
     ChatProvider,
     Done,
     ImagePart,
+    Message,
     ProviderEvent,
     TextDelta,
     ToolCallEvent,
+    ToolSchema,
 )
 from supex_driver.agent.settings import (
     load_settings,
@@ -383,6 +387,121 @@ class AgentServer:
                 )
         return text, images
 
+    _PROBE_TEXT = "Reply with the single word OK."
+
+    def _test_connection(self) -> dict[str, Any]:
+        """Run a staged provider connectivity probe against the saved config.
+
+        Executed on the background loop via :meth:`_run_async`. Replays the
+        real first-turn payload in four bisected stages so a single click
+        isolates which ingredient (large system prompt and/or the tool
+        schemas) makes a given endpoint reject the request. Returns per-stage
+        results plus the effective model/dialect/base_url.
+        """
+        return self._run_async(self._probe_stages())
+
+    async def _probe_stages(self) -> dict[str, Any]:
+        provider = self._agent.provider
+        messages = [Message(role="user", content=self._PROBE_TEXT)]
+        notes: list[str] = []
+        system: str | None = None
+        tools: Sequence[ToolSchema] | None = None
+        try:
+            tools = await self._agent.tools()
+        except AgentError as exc:
+            notes.append(
+                f"tool enumeration failed ({exc}); testing with file tools only"
+            )
+            tools = self._agent.files.schemas()
+        try:
+            from supex_driver.agent.prompts import build_system_prompt
+
+            system = build_system_prompt(
+                self._agent.files.workspace, vision=self._config.vision
+            )
+        except Exception as exc:  # noqa: BLE001 - guide build must not abort the test
+            notes.append(f"system prompt unavailable ({exc})")
+        cap = self._config.timeout + 15.0
+        stages: list[dict[str, Any]] = []
+        for name, with_tools, with_system in (
+            ("minimal", False, False),
+            ("tools", True, False),
+            ("system", False, True),
+            ("full", True, True),
+        ):
+            stages.append(
+                await self._probe_stage(
+                    provider,
+                    name,
+                    messages,
+                    tools if (with_tools and tools) else None,
+                    system if (with_system and system) else None,
+                    cap,
+                )
+            )
+        cfg = self._config
+        return {
+            "ok": all(stage["ok"] for stage in stages),
+            "model": cfg.model,
+            "dialect": cfg.effective_dialect,
+            "base_url": cfg.base_url,
+            "timeout": cfg.timeout,
+            "retries": cfg.retries,
+            "notes": notes,
+            "stages": stages,
+        }
+
+    async def _probe_stage(
+        self,
+        provider: ChatProvider,
+        name: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSchema] | None,
+        system: str | None,
+        cap: float,
+    ) -> dict[str, Any]:
+        """Stream one staged payload until Done, collecting a short sample.
+
+        Never mutates agent/conversation state; the stage is a throwaway
+        request. Any typed provider error (e.g. ``ProviderConnectionError``
+        for the DeepSeek 200-then-close) is recorded per stage.
+        """
+        started = time.monotonic()
+        sample: list[str] = []
+        stop: str | None = None
+        error: str | None = None
+        try:
+            async with asyncio.timeout(cap):
+                async for event in provider.stream(
+                    list(messages), tools=tools, system=system
+                ):
+                    if isinstance(event, TextDelta):
+                        sample.append(event.text)
+                        if len("".join(sample)) > 300:
+                            break
+                    elif isinstance(event, ToolCallEvent):
+                        sample.append(f"<tool:{event.name}>")
+                    elif isinstance(event, Done):
+                        stop = event.stop_reason
+                        break
+        except AgentError as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        except TimeoutError:
+            error = f"timeout after {cap:.0f}s"
+        except Exception as exc:  # noqa: BLE001 - a probe must never crash the server
+            error = f"{type(exc).__name__}: {exc}"
+        detail = "".join(sample)
+        if not error and not detail:
+            detail = stop or "no output"
+        return {
+            "name": name,
+            "ok": error is None,
+            "detail": detail[:300],
+            "error": error,
+            "elapsed": round(time.monotonic() - started, 2),
+            "stop_reason": stop,
+        }
+
 
 def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
     """Build a request handler bound to a specific ``AgentServer``."""
@@ -437,6 +556,9 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
             if self.path == "/api/chat":
                 self._do_chat()
                 return
+            if self.path == "/api/test":
+                self._do_test()
+                return
             if self.path == "/api/settings":
                 self._do_update_settings()
                 return
@@ -452,6 +574,34 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
                 result = server._update_settings(payload)
             except (AgentError, TypeError, ValueError) as exc:
                 self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200, result)
+
+        def _do_test(self) -> None:
+            if server._lock.locked():
+                self._send_json(
+                    409, {"ok": False, "error": "a turn is already running"}
+                )
+                return
+            if server._config.model is None:
+                self._send_json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": (
+                            "No AI model configured yet. Open Settings to add "
+                            "a base URL, API key, and model."
+                        ),
+                    },
+                )
+                return
+            try:
+                result = server._test_connection()
+            except Exception as exc:  # noqa: BLE001 - surfaced to the caller
+                logger.exception("connection test raised")
+                self._send_json(
+                    500, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                )
                 return
             self._send_json(200, result)
 
