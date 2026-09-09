@@ -436,6 +436,7 @@ def serve(
         max_tokens=max_tokens,
         max_iterations=max_iterations,
         provider_profile=provider_profile,
+        require_model=False,
     )
     server = AgentServer(
         config=config,
@@ -470,6 +471,7 @@ def _load_config_from(
     max_tokens: int | None,
     max_iterations: int | None,
     provider_profile: str | None = None,
+    require_model: bool = True,
 ) -> ProviderConfig:
     kwargs = _config_kwargs(
         model=model,
@@ -488,7 +490,7 @@ def _load_config_from(
         )
         if profile is None:
             profile = load_settings()
-        return load_config(profile=profile, **kwargs)
+        return load_config(profile=profile, require_model=require_model, **kwargs)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise typer.Exit(2) from exc

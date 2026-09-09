@@ -150,6 +150,15 @@ class TestLoadConfigPrecedence:
         with pytest.raises(ConfigError, match="no model configured"):
             load_config(env={"OPENAI_BASE_URL": "https://api.openai.com/v1"})
 
+    def test_missing_model_allowed_when_require_model_false(self):
+        cfg = load_config(require_model=False)
+        assert cfg.model is None
+        assert cfg.base_url
+
+    def test_missing_model_still_raises_by_default(self):
+        with pytest.raises(ConfigError, match="no model configured"):
+            load_config()
+
 
 class TestLoadConfigProfile:
     """Profile mappings are the weakest user source (flags > env > profile)."""

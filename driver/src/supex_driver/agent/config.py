@@ -123,6 +123,7 @@ def load_config(
     vision: bool | None = None,
     profile: Mapping[str, str] | None = None,
     env: Mapping[str, str] | None = None,
+    require_model: bool = True,
 ) -> ProviderConfig:
     """Build a :class:`ProviderConfig` from explicit args + env fallbacks.
 
@@ -130,6 +131,12 @@ def load_config(
     provider-standard ``OPENAI_*``/``ANTHROPIC_*`` group matching the
     effective dialect, then an optional ``profile`` mapping (the weakest
     user-supplied source), then built-in default base URLs.
+
+    ``require_model`` defaults to True and raises :class:`ConfigError` when no
+    model resolves. Pass ``require_model=False`` when the config may be
+    intentionally incomplete (for example the windowed app opening before the
+    user has configured a provider) — the caller is responsible for guarding
+    chat turns until a model is present.
     """
     env = os.environ if env is None else env
     profile = profile or {}
@@ -187,7 +194,7 @@ def load_config(
         resolved_key = env.get("ANTHROPIC_AUTH_TOKEN")
 
     resolved_model = model or supex_model or env.get(std_model) or profile.get("model")
-    if not resolved_model:
+    if require_model and not resolved_model:
         raise ConfigError(
             "no model configured; set SUPEX_AI_MODEL (or OPENAI_MODEL / "
             "ANTHROPIC_MODEL), pass --model, or add a 'model' to your "
@@ -200,9 +207,7 @@ def load_config(
         else _float_env(env, "SUPEX_AI_TEMPERATURE", float("nan"))
     )
     retries_value = (
-        retries
-        if retries is not None
-        else _int_env(env, "SUPEX_AI_RETRIES", 2)
+        retries if retries is not None else _int_env(env, "SUPEX_AI_RETRIES", 2)
     )
     if retries_value < 0:
         raise ConfigError(f"SUPEX_AI_RETRIES must be >= 0, got {retries_value}")

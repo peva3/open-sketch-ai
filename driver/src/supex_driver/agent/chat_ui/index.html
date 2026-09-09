@@ -116,6 +116,8 @@
   }
   .thumb.full { position: fixed; inset: 10%; width: 80%; height: 80%; max-width: none; max-height: none; object-fit: contain; z-index: 5; background: #000; }
   #errline { display: none; color: var(--err); background: #2a1515; border: 1px solid var(--err); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
+  #nudge { display: none; color: var(--text-dim); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; }
+  #nudge a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   footer {
     border-top: 1px solid var(--border);
     background: var(--panel);
@@ -200,6 +202,7 @@
     The model writes <code>.rb</code> files, runs them, then screenshots its own
     work to verify before replying.</div>
   <div id="errline"></div>
+  <div id="nudge">No AI model configured yet. Open <a id="nudge-link">Settings</a> to add a base URL, API key, and model so prompts can run.</div>
 </main>
 <footer>
   <div id="inputrow">
@@ -274,6 +277,8 @@ const promptEl = document.getElementById("prompt");
 const sendEl = document.getElementById("send");
 const resetEl = document.getElementById("reset");
 const errline = document.getElementById("errline");
+const nudgeEl = document.getElementById("nudge");
+const nudgeLinkEl = document.getElementById("nudge-link");
 const settingsEl = document.getElementById("settings");
 const settingsToggleEl = document.getElementById("settings-toggle");
 const settingsSaveEl = document.getElementById("settings-save");
@@ -300,6 +305,7 @@ async function loadHealth() {
     setBadge("b-vision", "vision: " + (h.vision ? "on" : "off"), h.vision ? "ok" : "");
     const ws = (h.workspace || "").split(/[\\/]/).pop() || h.workspace || "?";
     setBadge("b-ws", "workspace: " + ws);
+    nudgeEl.style.display = h.model ? "none" : "block";
   } catch (e) {
     setBadge("b-model", "server unreachable", "err");
   }
@@ -624,6 +630,7 @@ async function saveSettings() {
 }
 
 settingsToggleEl.addEventListener("click", openSettings);
+nudgeLinkEl.addEventListener("click", openSettings);
 settingsCancelEl.addEventListener("click", closeSettings);
 settingsSaveEl.addEventListener("click", saveSettings);
 settingsEl.addEventListener("click", function (ev) { if (ev.target === settingsEl) closeSettings(); });

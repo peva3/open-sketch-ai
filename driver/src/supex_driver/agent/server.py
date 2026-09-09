@@ -324,7 +324,9 @@ class AgentServer:
 
         allow_delete = bool(payload.get("allow_delete", self._allow_delete))
         kwargs = settings_config_kwargs(merged)
-        new_config = load_config(**kwargs, env=os.environ)
+        # require_model=False: saving partial settings (or none yet) must not
+        # hard-fail; chat is guarded separately until a model is configured.
+        new_config = load_config(**kwargs, env=os.environ, require_model=False)
         old = self._agent
         self._config = new_config
         self._allow_delete = allow_delete
@@ -470,6 +472,23 @@ def _make_handler(server: AgentServer) -> type[BaseHTTPRequestHandler]:
             except ValueError as exc:
                 server._lock.release()
                 self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+
+            # The windowed app must open before any provider is configured.
+            # Until a model is present, refuse the turn with a friendly line
+            # instead of starting an agent loop that could never stream.
+            if server._config.model is None:
+                server._lock.release()
+                self._send_json(
+                    400,
+                    {
+                        "ok": False,
+                        "error": (
+                            "No AI model configured yet. Open Settings to add a "
+                            "base URL, API key, and model."
+                        ),
+                    },
+                )
                 return
 
             self.send_response(200)

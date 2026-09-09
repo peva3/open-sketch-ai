@@ -142,6 +142,29 @@ async def test_health_reports_config(backend, tmp_path) -> None:
         _stop_server(server)
 
 
+async def test_health_and_chat_without_model(backend, tmp_path) -> None:
+    no_model = ProviderConfig(
+        base_url="http://localhost:1",
+        api_key="test-key",
+        model=None,
+        dialect="openai",
+        max_iterations=8,
+    )
+    server = _start_server(no_model, provider=ScriptedProvider(), workspace=tmp_path)
+    try:
+        async with httpx2.AsyncClient() as client:
+            health = await client.get(f"{server.url}/api/health")
+            assert health.status_code == 200
+            assert health.json()["model"] is None
+            chat = await client.post(f"{server.url}/api/chat", json={"text": "hi"})
+            assert chat.status_code == 400
+            body = chat.json()
+            assert body["ok"] is False
+            assert "No AI model configured yet" in body["error"]
+    finally:
+        _stop_server(server)
+
+
 async def test_index_serves_chat_ui(backend, tmp_path) -> None:
     provider = ScriptedProvider()
     server = _start_server(_config(), provider=provider, workspace=tmp_path)
